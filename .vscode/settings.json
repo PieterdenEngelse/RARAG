@@ -1,0 +1,17 @@
+{
+  "files.autoSave": "afterDelay",
+  "files.autoSaveDelay": 1500,
+  "rust-analyzer.cargo.runBuildScripts": true,
+  "rust-analyzer.checkOnSave.command": "clippy",
+  "editor.formatOnSave": true,
+  "editor.codeActionsOnSave": {
+    "source.fixAll": "explicit"
+  },
+  "terminal.integrated.defaultProfile.linux": "bash",
+  "editor.tabSize": 4,
+  "editor.rulers": [
+    100
+  ],
+  "editor.wordWrap": "on",
+  "rust-analyzer.enable": false
+}

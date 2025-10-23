@@ -1,0 +1,38 @@
+[package]
+name = "ag"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+llm = "1.3.4"
+rusqlite = "0.37.0"
+tantivy = "0.24.2"
+pdf-extract = "0.7"
+actix-web = "4.11.0"
+actix-cors = "0.7"
+actix-multipart = "0.7.2"
+tokio = "1.47.1"
+futures-util = "0.3.31"
+serde_json = "1.0.145"
+notify = "6"
+dirs = "6.0.0"
+ctrlc = "3.5.0"
+seahash = "4.1.0"
+serde = { version = "1.0.228", features = ["derive"] }
+thiserror = "1.0"
+tempfile = "3"
+rayon = "1.10"
+walkdir = "2"
+regex = "1.10"
+lru = "0.12"
+tracing = "0.1"
+tracing-subscriber = "0.3"
+log = "0.4"
+fs2 = "0.4"
+chrono = { version = "0.4.42", features = ["serde"] }
+dotenvy = "0.15"
+uuid = { version = "1.0", features = ["v4"] }
+async-trait = "0.1"
+reqwest = { version = "0.11", features = ["json"] }
+
+

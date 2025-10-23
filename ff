@@ -1,0 +1,6 @@
+# Check all Phase files
+echo "=== API ===" && ls -la src/api/
+echo "=== Memory ===" && ls -la src/memory/
+echo "=== Tests ===" && ls -la tests/
+echo "=== Examples ===" && ls -la examples/
+echo "=== Docs ===" && ls -la *.md 2>/dev/null || echo "No .md files"
