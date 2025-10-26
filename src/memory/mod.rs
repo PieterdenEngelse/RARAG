@@ -7,7 +7,7 @@ pub mod llm_provider;
 pub mod agent;
 pub mod decision_engine;
 pub mod persistence;
-pub mod multi_agent;
+// pub mod multi_agent;  // TODO: Fix after core is stable
 
 pub use chunker::{Chunk, ChunkMetadata, ChunkerConfig, SemanticChunker, SourceType};
 pub use vector_store::{VectorStore, VectorStoreConfig, VectorRecord, SearchResult, StoreStats, VectorStoreError};

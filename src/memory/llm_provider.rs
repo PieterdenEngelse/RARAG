@@ -5,8 +5,10 @@
 use serde::{Deserialize, Serialize};
 use tracing::{debug, info, warn};
 
+
 /// LLM Provider trait - implement this to support new models
 #[async_trait::async_trait]
+
 pub trait LLMProvider: Send + Sync {
     async fn generate(&self, prompt: &str) -> Result<String, LLMError>;
     fn model_name(&self) -> &str;

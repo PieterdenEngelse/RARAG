@@ -1,4 +1,4 @@
-// src/api/mod.rs - Complete with Phase 4 Memory API
+// src/api/mod.rs - Complete with Phase 4 Memory API and Phase 8 Decision Engine
 
 use actix_web::{web, App, HttpResponse, HttpServer, Error};
 use actix_cors::Cors;
@@ -8,7 +8,7 @@ use std::fs;
 use std::io::Write;
 use std::path::Path;
 use std::sync::{Arc, Mutex, OnceLock};
-use log::error;
+use tracing::error;
 use chrono::Utc;
 
 use crate::retriever::Retriever;
@@ -20,6 +20,9 @@ use crate::embedder::EmbeddingService;
 use crate::memory::VectorStore;
 
 pub mod memory_routes;
+pub mod decision_engine_routes;
+pub mod tool_routes;
+pub mod composer_routes;
 
 pub const UPLOAD_DIR: &str = "documents";
 
@@ -379,6 +382,153 @@ pub async fn run_agent(req: web::Json<AgentRequest>) -> Result<HttpResponse, Err
 
 // ============ API Server ============
 
+
+// ============ Phase 11 Step 3: L2 Cache Handlers - Version 1.0.0 ============
+
+/// Get L2 cache statistics
+/// GET /cache/stats
+pub async fn get_l2_cache_stats() -> Result<HttpResponse, Error> {
+    if let Some(retriever) = RETRIEVER.get() {
+        let retriever = retriever.lock().unwrap();
+        let stats = retriever.get_l2_cache_stats();
+        Ok(HttpResponse::Ok().json(stats))
+    } else {
+        Ok(HttpResponse::InternalServerError().json(serde_json::json!({
+            "status": "error",
+            "message": "Retriever not initialized"
+        })))
+    }
+}
+
+/// Clear L2 cache
+/// POST /cache/clear-l2
+pub async fn clear_l2_cache() -> Result<HttpResponse, Error> {
+    if let Some(retriever) = RETRIEVER.get() {
+        let mut retriever = retriever.lock().unwrap();
+        retriever.clear_l2_cache();
+        Ok(HttpResponse::Ok().json(serde_json::json!({
+            "status": "success",
+            "message": "L2 cache cleared"
+        })))
+    } else {
+        Ok(HttpResponse::InternalServerError().json(serde_json::json!({
+            "status": "error",
+            "message": "Retriever not initialized"
+        })))
+    }
+}
+
+/// Log cache statistics to console
+/// POST /cache/log
+pub async fn log_l2_cache_stats() -> Result<HttpResponse, Error> {
+    if let Some(retriever) = RETRIEVER.get() {
+        let retriever = retriever.lock().unwrap();
+        retriever.log_cache_stats();
+        Ok(HttpResponse::Ok().json(serde_json::json!({
+            "status": "success",
+            "message": "Cache stats logged to console"
+        })))
+    } else {
+        Ok(HttpResponse::InternalServerError().json(serde_json::json!({
+            "status": "error",
+            "message": "Retriever not initialized"
+        })))
+    }
+}
+
+
+// === Phase 12 Step 3: Redis L3 Cache Handlers - Version 1.0.0 ===
+
+/// Get Redis L3 cache status
+/// GET /cache/redis/status
+pub async fn get_redis_status() -> Result<HttpResponse, Error> {
+    if let Some(retriever) = RETRIEVER.get() {
+        let retriever = retriever.lock().unwrap();
+        let status = retriever.get_l3_cache_status();
+        Ok(HttpResponse::Ok().json(serde_json::json!({
+            "status": status,
+            "timestamp": Utc::now().to_rfc3339()
+        })))
+    } else {
+        Ok(HttpResponse::InternalServerError().json(serde_json::json!({
+            "status": "error",
+            "message": "Retriever not initialized"
+        })))
+    }
+}
+
+/// Get Redis connection info
+/// GET /cache/redis/info
+pub async fn get_redis_info() -> Result<HttpResponse, Error> {
+    if let Some(retriever) = RETRIEVER.get() {
+        let retriever = retriever.lock().unwrap();
+        let status = retriever.get_l3_cache_status();
+        Ok(HttpResponse::Ok().json(serde_json::json!({
+            "redis_status": status,
+            "message": "Use /cache/redis/status for more details"
+        })))
+    } else {
+        Ok(HttpResponse::InternalServerError().json(serde_json::json!({
+            "status": "error",
+            "message": "Retriever not initialized"
+        })))
+    }
+}
+
+/// Check Redis connectivity
+/// POST /cache/redis/ping
+pub async fn redis_ping() -> Result<HttpResponse, Error> {
+    if let Some(retriever) = RETRIEVER.get() {
+        let retriever = retriever.lock().unwrap();
+        let status = retriever.get_l3_cache_status();
+        if status.contains("ENABLED") {
+            Ok(HttpResponse::Ok().json(serde_json::json!({
+                "status": "success",
+                "message": "Redis L3 cache is available",
+                "redis_status": status
+            })))
+        } else {
+            Ok(HttpResponse::ServiceUnavailable().json(serde_json::json!({
+                "status": "unavailable",
+                "message": "Redis L3 cache is not available",
+                "redis_status": status
+            })))
+        }
+    } else {
+        Ok(HttpResponse::InternalServerError().json(serde_json::json!({
+            "status": "error",
+            "message": "Retriever not initialized"
+        })))
+    }
+}
+
+/// Get combined cache status (L1, L2, L3)
+/// GET /cache/status/all
+pub async fn get_all_cache_status() -> Result<HttpResponse, Error> {
+    if let Some(retriever) = RETRIEVER.get() {
+        let retriever = retriever.lock().unwrap();
+        let l2_stats = retriever.get_l2_cache_stats();
+        let l3_status = retriever.get_l3_cache_status();
+        
+        Ok(HttpResponse::Ok().json(serde_json::json!({
+            "l1_cache": "In-memory LRU (enabled)",
+            "l2_cache": {
+                "type": "Memory with TTL",
+                "hits": l2_stats.l2_hits,
+                "misses": l2_stats.l2_misses,
+                "total_items": l2_stats.total_items
+            },
+            "l3_cache": l3_status,
+            "timestamp": Utc::now().to_rfc3339()
+        })))
+    } else {
+        Ok(HttpResponse::InternalServerError().json(serde_json::json!({
+            "status": "error",
+            "message": "Retriever not initialized"
+        })))
+    }
+}
+
 pub fn start_api_server(config: &ApiConfig) -> impl std::future::Future<Output = std::io::Result<()>> {
     // Initialize Phase 4 services
     let embedding_service = EmbeddingService::new(crate::embedder::EmbeddingConfig::default());
@@ -433,6 +583,21 @@ pub fn start_api_server(config: &ApiConfig) -> impl std::future::Future<Output =
             .route("/api/memory/delete", web::delete().to(memory_routes::delete_chunk))
             .route("/api/memory/stats", web::get().to(memory_routes::get_stats))
             .route("/api/memory/clear", web::post().to(memory_routes::clear_store))
+            // Phase 8: Decision Engine Routes
+            .configure(decision_engine_routes::configure_decision_engine_routes)
+            // Phase 9: Tool routes
+            .configure(tool_routes::configure_tool_routes)
+            // Phase 10: Composer routes
+            .configure(composer_routes::configure_composer_routes)                    
+            // Phase 11: Cache management routes - Version 1.0.0
+            .route("/cache/stats", web::get().to(get_l2_cache_stats))
+            .route("/cache/clear-l2", web::post().to(clear_l2_cache))
+            .route("/cache/log", web::post().to(log_l2_cache_stats))
+            // Phase 12 Step 3: Redis L3 Cache routes - Version 1.0.0
+            .route("/cache/redis/status", web::get().to(get_redis_status))
+            .route("/cache/redis/info", web::get().to(get_redis_info))
+            .route("/cache/redis/ping", web::post().to(redis_ping))
+            .route("/cache/status/all", web::get().to(get_all_cache_status))
             // Agent
             .route("/agent", web::post().to(run_agent))
     })

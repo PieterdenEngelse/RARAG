@@ -4,6 +4,7 @@ use serde::{Deserialize, Serialize};
 use std::sync::{Arc, RwLock};
 
 use crate::retriever::{Retriever, RetrieverError, RetrieverMetrics};
+use crate::cache::cache_layer::CacheStats;
 
 type SharedRetriever = Arc<RwLock<Retriever>>;
 
@@ -183,6 +184,50 @@ pub async fn force_save(data: web::Data<SharedRetriever>) -> ActixResult<HttpRes
             Ok(()) => Ok(HttpResponse::Ok().json("Vectors saved")),
             Err(e) => Ok(HttpResponse::InternalServerError().json(format!("{}", e))),
         },
+        Err(_) => Ok(HttpResponse::InternalServerError().json("Lock poisoned")),
+    }
+}
+
+// === Phase 11 Step 3: L2 Cache Handlers - Version 1.0.0 ===
+
+/// Get L2 cache statistics
+/// GET /cache/stats
+pub async fn get_l2_cache_stats(data: web::Data<SharedRetriever>) -> ActixResult<HttpResponse> {
+    match data.read() {
+        Ok(retriever) => {
+            let stats = retriever.get_l2_cache_stats();
+            Ok(HttpResponse::Ok().json(stats))
+        }
+        Err(_) => Ok(HttpResponse::InternalServerError().json("Lock poisoned")),
+    }
+}
+
+/// Clear L2 cache
+/// POST /cache/clear-l2
+pub async fn clear_l2_cache(data: web::Data<SharedRetriever>) -> ActixResult<HttpResponse> {
+    match data.write() {
+        Ok(mut retriever) => {
+            retriever.clear_l2_cache();
+            Ok(HttpResponse::Ok().json(serde_json::json!({
+                "status": "success",
+                "message": "L2 cache cleared"
+            })))
+        }
+        Err(_) => Ok(HttpResponse::InternalServerError().json("Lock poisoned")),
+    }
+}
+
+/// Log cache statistics to console
+/// POST /cache/log
+pub async fn log_l2_cache_stats(data: web::Data<SharedRetriever>) -> ActixResult<HttpResponse> {
+    match data.read() {
+        Ok(retriever) => {
+            retriever.log_cache_stats();
+            Ok(HttpResponse::Ok().json(serde_json::json!({
+                "status": "success",
+                "message": "Cache stats logged to console"
+            })))
+        }
         Err(_) => Ok(HttpResponse::InternalServerError().json("Lock poisoned")),
     }
 }

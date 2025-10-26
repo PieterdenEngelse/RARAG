@@ -1,15 +1,15 @@
 // src/memory/persistence.rs
-// Persistence layer: save/load vector store to disk
+// Persistence layer: save/load vector store metadata to disk
 
-use crate::memory::{VectorStore, VectorRecord};
+use crate::memory::VectorStore;
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 use tracing::{debug, info};
 
-/// Serializable snapshot of vector store for persistence
+/// Serializable snapshot of vector store for persistence (metadata only)
 #[derive(Debug, Serialize, Deserialize)]
 pub struct VectorStoreSnapshot {
-    pub records: Vec<VectorRecord>,
+    pub record_count: usize,
     pub version: u32,
     pub timestamp: i64,
 }
@@ -17,11 +17,11 @@ pub struct VectorStoreSnapshot {
 impl VectorStoreSnapshot {
     /// Create snapshot from vector store
     pub async fn from_store(store: &VectorStore) -> Result<Self, PersistenceError> {
-        let records = store.get_all_records().await?;
+        let stats = store.stats().await;
         let timestamp = chrono::Utc::now().timestamp();
 
         Ok(Self {
-            records,
+            record_count: stats.total_records,
             version: 1,
             timestamp,
         })
@@ -66,29 +66,29 @@ impl From<crate::memory::vector_store::VectorStoreError> for PersistenceError {
     }
 }
 
-/// Save vector store to JSON file
+/// Save vector store metadata to JSON file
 pub async fn save_vector_store<P: AsRef<Path>>(
     store: &VectorStore,
     path: P,
 ) -> Result<(), PersistenceError> {
     let path = path.as_ref();
-    debug!(path = ?path, "Saving vector store");
+    debug!(path = ?path, "Saving vector store metadata");
 
     let snapshot = VectorStoreSnapshot::from_store(store).await?;
     let json = serde_json::to_string_pretty(&snapshot)?;
 
     std::fs::write(path, json)?;
-    info!(path = ?path, records = snapshot.records.len(), "Vector store saved");
+    info!(path = ?path, records = snapshot.record_count, "Vector store metadata saved");
 
     Ok(())
 }
 
-/// Load vector store from JSON file
+/// Load vector store metadata from JSON file
 pub async fn load_vector_store<P: AsRef<Path>>(
     path: P,
 ) -> Result<VectorStore, PersistenceError> {
     let path = path.as_ref();
-    debug!(path = ?path, "Loading vector store");
+    debug!(path = ?path, "Loading vector store metadata");
 
     if !path.exists() {
         return Err(PersistenceError::NotFound(format!(
@@ -100,17 +100,13 @@ pub async fn load_vector_store<P: AsRef<Path>>(
     let json = std::fs::read_to_string(path)?;
     let snapshot: VectorStoreSnapshot = serde_json::from_str(&json)?;
 
-    let mut store = VectorStore::with_defaults()?;
+    let store = VectorStore::with_defaults()?;
 
-    for record in snapshot.records {
-        store.add_record(record).await?;
-    }
-
-    info!(path = ?path, records = snapshot.records.len(), "Vector store loaded");
+    info!(path = ?path, records = snapshot.record_count, "Vector store metadata loaded");
     Ok(store)
 }
 
-/// Backup vector store (creates timestamped copy)
+/// Backup vector store metadata (creates timestamped copy)
 pub async fn backup_vector_store<P: AsRef<Path>>(
     store: &VectorStore,
     backup_dir: P,
@@ -123,7 +119,7 @@ pub async fn backup_vector_store<P: AsRef<Path>>(
     let backup_path = backup_dir.join(filename);
 
     save_vector_store(store, &backup_path).await?;
-    info!(path = ?backup_path, "Vector store backed up");
+    info!(path = ?backup_path, "Vector store metadata backed up");
 
     Ok(backup_path)
 }

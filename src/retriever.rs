@@ -24,6 +24,7 @@ use std::path::Path;
 use tracing::{info, error};
 use std::fs; 
 use fs2;
+use crate::cache::redis_cache::RedisCache;
 
 /// Custom error type for Retriever operations
 #[derive(Debug, Serialize, Deserialize)]
@@ -167,6 +168,11 @@ pub struct Retriever {
     batch_mode: bool,
     search_cache: LruCache<String, Vec<String>>,
     cache_enabled: bool,
+    // Phase 11 Step 2: L2 Cache integration
+    l2_cache: Option<crate::cache::cache_layer::MemoryCache<String, Vec<String>>>,
+    l2_cache_stats: crate::cache::cache_layer::CacheStats,
+    // Phase 12 Step 2: L3 Redis Cache integration
+    l3_cache: Option<RedisCache>,
     pub metrics: RetrieverMetrics,
     index_dir_path: String,
 }
@@ -210,6 +216,11 @@ impl Retriever {
             batch_mode: false,
             search_cache: LruCache::new(NonZeroUsize::new(100).unwrap()),
             cache_enabled: true,
+            // Phase 11 Step 2: Initialize L2 cache (300 seconds = 5 minute TTL)
+            l2_cache: Some(crate::cache::cache_layer::MemoryCache::new(300)),
+            l2_cache_stats: crate::cache::cache_layer::CacheStats::default(),
+            // Phase 12 Step 2: L3 Redis cache (initialized later from config)
+            l3_cache: None,
             metrics: RetrieverMetrics {
                 index_path: index_dir.to_string(),
                 ..Default::default()
@@ -231,6 +242,16 @@ impl Retriever {
         
         Ok(retriever)
     }
+// LOCATION: ag/src/retriever.rs
+// INSERT THIS AFTER LINE 221 (after the new_with_vector_file method ends)
+
+    /// NEW for v13.1.2: Create with PathBuf paths (wrapper for new_with_vector_file)
+    
+    pub fn new_with_paths(index_dir: std::path::PathBuf, vector_file: std::path::PathBuf) -> Result<Self, RetrieverError> {
+    let index_dir_str = index_dir.to_string_lossy().to_string();
+    let vector_file_str = vector_file.to_string_lossy().to_string();
+    Self::new_with_vector_file(&index_dir_str, &vector_file_str)
+}
 
     /// Create a new Retriever with default vector storage path ("./vectors.json")
     pub fn new(index_dir: &str) -> Result<Self, RetrieverError> {
@@ -745,6 +766,53 @@ impl Retriever {
     }
 }
 
+// Phase 11 Step 2: L2 Cache Methods - Version 1.0.0
+impl Retriever {
+    /// Get current L2 cache statistics
+    pub fn get_l2_cache_stats(&self) -> crate::cache::cache_layer::CacheStats {
+        self.l2_cache_stats.clone()
+    }
+
+    /// Clear L2 cache
+    pub fn clear_l2_cache(&mut self) {
+        if let Some(ref l2) = self.l2_cache {
+            l2.clear();
+        }
+        self.l2_cache_stats = crate::cache::cache_layer::CacheStats::default();
+    }
+
+    /// Log cache statistics
+    pub fn log_cache_stats(&self) {
+        println!("L2 Cache Stats:");
+        println!("  L1 Hits: {}", self.l2_cache_stats.l1_hits);
+        println!("  L1 Misses: {}", self.l2_cache_stats.l1_misses);
+        println!("  L2 Hits: {}", self.l2_cache_stats.l2_hits);
+        println!("  L2 Misses: {}", self.l2_cache_stats.l2_misses);
+        println!("  Total Items: {}", self.l2_cache_stats.total_items);
+    }
+
+    // Phase 12 Step 2: L3 Redis Cache methods
+
+    /// Get L3 Redis cache status
+    pub fn get_l3_cache_status(&self) -> String {
+        if let Some(cache) = &self.l3_cache {
+            if cache.is_enabled() {
+                "L3 Redis cache: ENABLED".to_string()
+            } else {
+                "L3 Redis cache: DISABLED".to_string()
+            }
+        } else {
+            "L3 Redis cache: NOT INITIALIZED".to_string()
+        }
+    }
+
+    /// Set L3 Redis cache (called during initialization)
+    pub fn set_l3_cache(&mut self, cache: RedisCache) {
+        self.l3_cache = Some(cache);
+        info!("L3 Redis cache set");
+    }
+}
+
 impl Drop for Retriever {
     fn drop(&mut self) {
         if self.batch_mode {
@@ -760,4 +828,3 @@ impl Drop for Retriever {
         }
     }
 }
-

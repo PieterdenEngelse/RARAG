@@ -1,3 +1,7 @@
+pub mod path_manager;
+pub mod db {
+    pub mod schema_init;
+}
 pub mod config;
 pub mod retriever;
 pub mod rules;
@@ -10,3 +14,7 @@ pub mod agent;
 pub use retriever::Retriever;
 pub mod agent_memory;
 pub mod memory;  // The folder
+pub mod tools;
+pub mod cache;
+pub mod installer;
+pub mod monitoring;
