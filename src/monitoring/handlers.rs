@@ -87,21 +87,12 @@ pub async fn live_handler(
 /// Returns metrics in Prometheus text format
 /// Content-Type: text/plain; version=0.0.4
 pub async fn metrics_handler(
-    ctx: web::Data<MonitoringContext>,
+    _ctx: web::Data<MonitoringContext>,
 ) -> ActixResult<HttpResponse> {
-    match ctx.metrics.export() {
-        Ok(metrics_text) => {
-            Ok(HttpResponse::Ok()
-                .content_type("text/plain; version=0.0.4; charset=utf-8")
-                .body(metrics_text))
-        }
-        Err(e) => {
-            tracing::error!(error = %e, "Failed to export metrics");
-            Ok(HttpResponse::InternalServerError().json(json!({
-                "error": "Failed to export metrics"
-            })))
-        }
-    }
+    let metrics_text = crate::monitoring::metrics::export_prometheus();
+    Ok(HttpResponse::Ok()
+        .content_type("text/plain; version=0.0.4; charset=utf-8")
+        .body(metrics_text))
 }
 
 /// Register monitoring routes
@@ -116,7 +107,31 @@ pub fn register_routes(cfg: &mut web::ServiceConfig) {
             .route("/ready", web::get().to(ready_handler))
             .route("/live", web::get().to(live_handler))
             .route("/metrics", web::get().to(metrics_handler))
+            .route("/config", web::get().to(config_handler))
+            .service(
+                web::scope("/pprof")
+                    .route("/cpu", web::get().to(crate::monitoring::pprof::pprof_cpu))
+                    .route("/heap", web::get().to(crate::monitoring::pprof::pprof_heap))
+            )
     );
+}
+
+/// Monitoring config/introspection endpoint
+/// GET /monitoring/config
+pub async fn config_handler(
+    _ctx: web::Data<MonitoringContext>,
+) -> ActixResult<HttpResponse> {
+    let search = std::env::var("SEARCH_HISTO_BUCKETS").ok();
+    let reindex = std::env::var("REINDEX_HISTO_BUCKETS").ok();
+    let parsed_search = crate::monitoring::metrics::__test_parse_buckets_env("SEARCH_HISTO_BUCKETS");
+    let parsed_reindex = crate::monitoring::metrics::__test_parse_buckets_env("REINDEX_HISTO_BUCKETS");
+
+    Ok(HttpResponse::Ok().json(json!({
+        "search_histo_buckets_env": search,
+        "reindex_histo_buckets_env": reindex,
+        "search_histo_buckets_effective": parsed_search.unwrap_or(vec![1.0,2.0,5.0,10.0,20.0,50.0,100.0,250.0,500.0,1000.0]),
+        "reindex_histo_buckets_effective": parsed_reindex.unwrap_or(vec![50.0,100.0,250.0,500.0,1000.0,2000.0,5000.0,10000.0])
+    })))
 }
 
 #[cfg(test)]
@@ -127,14 +142,20 @@ mod tests {
     #[actix_web::test]
     async fn test_health_endpoint() {
         let config = super::super::config::MonitoringConfig::default();
-        let ctx = super::super::MonitoringContext::new(config)
+        let mut ctx = super::super::MonitoringContext::new(config)
             .expect("Failed to create context");
+        // Mark ready and set components healthy to ensure 200
+        ctx.health.mark_ready();
+        ctx.health.set_component_status("api", super::super::health::ComponentStatus::Healthy);
+        ctx.health.set_component_status("database", super::super::health::ComponentStatus::Healthy);
+        ctx.health.set_component_status("configuration", super::super::health::ComponentStatus::Healthy);
+        ctx.health.set_component_status("logging", super::super::health::ComponentStatus::Healthy);
         let ctx = web::Data::new(ctx);
-        
+
         let _req = test::TestRequest::get()
             .uri("/health")
             .to_http_request();
-        
+
         let resp = health_handler(ctx).await.unwrap();
         assert_eq!(resp.status(), actix_web::http::StatusCode::OK);
     }

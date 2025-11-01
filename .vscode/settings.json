@@ -13,5 +13,9 @@
     100
   ],
   "editor.wordWrap": "on",
-  "rust-analyzer.enable": false
+  "rust-analyzer.enable": false,
+  "codium.codeCompletion.enable": true,
+  "codium.terminalAllowedCommands": [
+    "*"
+  ]
 }

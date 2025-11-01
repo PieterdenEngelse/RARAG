@@ -12,7 +12,7 @@ pub enum PathError {
     #[error("Environment variable not set: {0}")]
     EnvVarNotSet(String),
 }
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct PathManager {
     base_dir: PathBuf,
     data_dir: PathBuf,
@@ -88,6 +88,13 @@ impl PathManager {
 
     pub fn cache_dir(&self) -> &Path {
         &self.cache_dir
+    }
+
+    // Added: locks directory under AG_HOME (e.g., ~/.local/share/ag/locks)
+    pub fn locks_dir(&self) -> PathBuf {
+        let p = self.base_dir.join("locks");
+        let _ = std::fs::create_dir_all(&p);
+        p
     }
 
     pub fn db_path(&self, name: &str) -> PathBuf {

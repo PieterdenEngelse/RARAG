@@ -1,0 +1,10 @@
+{
+  "theme": "light",
+  "diffDisplay": "auto",
+  "onboardingCompleted": true,
+  "update": {
+    "enabled": true,
+    "channel": "stable",
+    "checkInterval": 1
+  }
+}

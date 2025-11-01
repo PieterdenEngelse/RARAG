@@ -56,13 +56,11 @@ pub fn init_tracing(config: &MonitoringConfig) -> Result<Box<dyn std::any::Any>,
                 .with_ansi(false) // No ANSI codes in files
                 .json(); // JSON format for files
             
-            registry
-                .with(console_layer)
-                .with(file_layer)
-                .init();
+            let subscriber = registry.with(console_layer).with(file_layer);
+            let _ = subscriber.try_init();
         } else {
             // Console only
-            registry.with(console_layer).init();
+            let _ = registry.with(console_layer).try_init();
         }
     } else if config.enable_file_logging {
         // File only
@@ -74,7 +72,7 @@ pub fn init_tracing(config: &MonitoringConfig) -> Result<Box<dyn std::any::Any>,
             .with_ansi(false)
             .json();
         
-        registry.with(file_layer).init();
+        let _ = registry.with(file_layer).try_init();
     }
     
     Ok(Box::new(()))

@@ -278,6 +278,7 @@ dependencies = [
  "llm",
  "lru",
  "notify",
+ "once_cell",
  "parking_lot",
  "pdf-extract",
  "prometheus",

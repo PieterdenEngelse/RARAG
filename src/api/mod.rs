@@ -1,5 +1,3 @@
-// src/api/mod.rs - Complete with Phase 4 Memory API and Phase 8 Decision Engine
-
 use actix_web::{web, App, HttpResponse, HttpServer, Error};
 use actix_cors::Cors;
 use actix_multipart::Multipart;
@@ -8,23 +6,47 @@ use std::fs;
 use std::io::Write;
 use std::path::Path;
 use std::sync::{Arc, Mutex, OnceLock};
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::collections::HashMap;
 use tracing::error;
-use chrono::Utc;
-
+use serde_json::json;
 use crate::retriever::Retriever;
 use crate::index;
 use crate::agent::{Agent, AgentResponse};
 use crate::agent_memory::{AgentMemory, MemoryItem, MemorySearchResult};
+use chrono::Utc;
 use crate::config::ApiConfig;
-use crate::embedder::EmbeddingService;
-use crate::memory::VectorStore;
-
-pub mod memory_routes;
-pub mod decision_engine_routes;
-pub mod tool_routes;
-pub mod composer_routes;
+use uuid::Uuid;
 
 pub const UPLOAD_DIR: &str = "documents";
+
+// Phase 15: Global reindex concurrency guard
+static REINDEX_IN_PROGRESS: AtomicBool = AtomicBool::new(false);
+
+/// Check if reindex is currently in progress
+pub fn is_reindex_in_progress() -> bool {
+    REINDEX_IN_PROGRESS.load(Ordering::SeqCst)
+}
+
+// Phase 15: Async job tracking
+#[derive(Clone, Debug, serde::Serialize)]
+struct AsyncJob {
+    job_id: String,
+    status: String, // "pending", "running", "completed", "failed"
+    started_at: String,
+    completed_at: Option<String>,
+    vectors_indexed: Option<usize>,
+    mappings_indexed: Option<usize>,
+    error: Option<String>,
+}
+
+static ASYNC_JOBS: OnceLock<Arc<Mutex<HashMap<String, AsyncJob>>>> = OnceLock::new();
+
+fn get_jobs_map() -> Arc<Mutex<HashMap<String, AsyncJob>>> {
+    ASYNC_JOBS
+        .get_or_init(|| Arc::new(Mutex::new(HashMap::new())))
+        .clone()
+}
 
 // Global retriever handle
 static RETRIEVER: OnceLock<Arc<Mutex<Retriever>>> = OnceLock::new();
@@ -34,80 +56,56 @@ pub fn set_retriever_handle(handle: Arc<Mutex<Retriever>>) {
 }
 
 #[derive(serde::Deserialize)]
-pub struct SearchQuery {
-    pub q: String,
+pub struct SearchQuery { 
+    pub q: String 
 }
 
 #[derive(serde::Deserialize)]
-pub struct RerankRequest {
-    pub query: String,
-    pub candidates: Vec<String>,
+pub struct RerankRequest { 
+    pub query: String, 
+    pub candidates: Vec<String> 
 }
 
 #[derive(serde::Deserialize)]
-pub struct SummarizeRequest {
-    pub query: String,
-    pub candidates: Vec<String>,
+pub struct SummarizeRequest { 
+    pub query: String, 
+    pub candidates: Vec<String> 
 }
 
-#[derive(serde::Deserialize)]
-pub struct StoreRagRequest {
-    pub agent_id: String,
-    pub memory_type: String,
-    pub content: String,
+/// Generate a short request ID for correlation
+fn generate_request_id() -> String {
+    Uuid::new_v4().to_string()[..8].to_string()
 }
-
-#[derive(serde::Deserialize)]
-pub struct SearchRagRequest {
-    pub agent_id: String,
-    pub query: String,
-    pub top_k: usize,
-}
-
-#[derive(serde::Deserialize)]
-pub struct RecallRagRequest {
-    pub agent_id: String,
-    pub limit: usize,
-}
-
-#[derive(serde::Deserialize)]
-pub struct AgentRequest {
-    pub query: String,
-    #[serde(default = "default_top_k")]
-    pub top_k: usize,
-}
-
-fn default_top_k() -> usize {
-    10
-}
-
-// ============ Health & Status Handlers ============
 
 pub async fn health_check() -> Result<HttpResponse, Error> {
+    let request_id = generate_request_id();
     if let Some(retriever) = RETRIEVER.get() {
         let retriever = retriever.lock().unwrap();
         match retriever.health_check() {
             Ok(()) => {
-                Ok(HttpResponse::Ok().json(serde_json::json!({
+                Ok(HttpResponse::Ok().json(json!({
                     "status": "healthy",
                     "documents": retriever.metrics.total_documents_indexed,
                     "vectors": retriever.metrics.total_vectors,
-                    "index_path": retriever.metrics.index_path
+                    "index_path": retriever.metrics.index_path,
+                    "request_id": request_id
                 })))
-            }
+            },
             Err(e) => {
-                error!("Health check failed: {}", e);
-                Ok(HttpResponse::ServiceUnavailable().json(serde_json::json!({
+                error!("[{}] Health check failed: {}", request_id, e);
+                Ok(HttpResponse::ServiceUnavailable().json(json!({
                     "status": "unhealthy",
-                    "error": e.to_string()
+                    "error": e.to_string(),
+                    "request_id": request_id
                 })))
             }
         }
     } else {
-        error!("Health check failed: Retriever not initialized");
-        Ok(HttpResponse::ServiceUnavailable().json(serde_json::json!({
+        error!("[{}] Health check failed: Retriever not initialized", request_id);
+        Ok(HttpResponse::ServiceUnavailable().json(json!({
             "status": "unhealthy",
-            "error": "Retriever not initialized"
+            "error": "Retriever not initialized",
+            "request_id": request_id
         })))
     }
 }
@@ -119,67 +117,77 @@ async fn root_handler() -> Result<HttpResponse, Error> {
 }
 
 async fn ready_check() -> Result<HttpResponse, Error> {
+    let request_id = generate_request_id();
     if let Some(retriever) = RETRIEVER.get() {
         match retriever.lock() {
             Ok(retriever) => {
                 match retriever.ready_check() {
                     Ok(_) => {
-                        Ok(HttpResponse::Ok().json(serde_json::json!({
+                        Ok(HttpResponse::Ok().json(json!({
                             "status": "ready",
-                            "timestamp": Utc::now().to_rfc3339()
+                            "timestamp": Utc::now().to_rfc3339(),
+                            "request_id": request_id
                         })))
                     }
                     Err(e) => {
-                        Ok(HttpResponse::ServiceUnavailable().json(serde_json::json!({
+                        Ok(HttpResponse::ServiceUnavailable().json(json!({
                             "status": "not ready",
                             "error": e.to_string(),
-                            "timestamp": Utc::now().to_rfc3339()
+                            "timestamp": Utc::now().to_rfc3339(),
+                            "request_id": request_id
                         })))
                     }
                 }
             }
             Err(e) => {
-                Ok(HttpResponse::ServiceUnavailable().json(serde_json::json!({
+                Ok(HttpResponse::ServiceUnavailable().json(json!({
                     "status": "not ready",
                     "error": format!("Failed to acquire lock: {}", e),
-                    "timestamp": Utc::now().to_rfc3339()
+                    "timestamp": Utc::now().to_rfc3339(),
+                    "request_id": request_id
                 })))
             }
         }
     } else {
-        Ok(HttpResponse::ServiceUnavailable().json(serde_json::json!({
+        Ok(HttpResponse::ServiceUnavailable().json(json!({
             "status": "not ready",
             "message": "Retriever not initialized",
-            "timestamp": Utc::now().to_rfc3339()
+            "timestamp": Utc::now().to_rfc3339(),
+            "request_id": request_id
         })))
     }
 }
 
 async fn get_metrics() -> Result<HttpResponse, Error> {
+    let request_id = generate_request_id();
     if let Some(retriever) = RETRIEVER.get() {
         match retriever.lock() {
             Ok(retriever) => {
                 let metrics = retriever.get_metrics();
-                Ok(HttpResponse::Ok().json(metrics))
+                Ok(HttpResponse::Ok().json(json!({
+                    "metrics": metrics,
+                    "request_id": request_id
+                })))
             }
             Err(e) => {
-                Ok(HttpResponse::InternalServerError().json(serde_json::json!({
+                Ok(HttpResponse::InternalServerError().json(json!({
                     "status": "error",
-                    "error": format!("Failed to acquire lock: {}", e)
+                    "error": format!("Failed to acquire lock: {}", e),
+                    "request_id": request_id
                 })))
             }
         }
     } else {
-        Ok(HttpResponse::ServiceUnavailable().json(serde_json::json!({
+        Ok(HttpResponse::ServiceUnavailable().json(json!({
             "status": "error",
-            "message": "Retriever not initialized"
+            "message": "Retriever not initialized",
+            "request_id": request_id
         })))
     }
 }
 
-// ============ Document Upload & Management ============
-
 pub async fn upload_document(mut payload: Multipart) -> Result<HttpResponse, Error> {
+    let request_id = generate_request_id();
     fs::create_dir_all(UPLOAD_DIR).ok();
     let mut uploaded_files = Vec::new();
 
@@ -207,14 +215,16 @@ pub async fn upload_document(mut payload: Multipart) -> Result<HttpResponse, Err
         uploaded_files.push(filename);
     }
 
-    Ok(HttpResponse::Ok().json(serde_json::json!({
+    Ok(HttpResponse::Ok().json(json!({
         "status": "success",
         "uploaded_files": uploaded_files,
-        "message": "Use /reindex to refresh index"
+        "message": "Use /reindex to refresh index",
+        "request_id": request_id
     })))
 }
 
 pub async fn list_documents() -> Result<HttpResponse, Error> {
+    let request_id = generate_request_id();
     let mut files = Vec::new();
     if let Ok(entries) = fs::read_dir(UPLOAD_DIR) {
         for entry in entries.flatten() {
@@ -225,322 +235,347 @@ pub async fn list_documents() -> Result<HttpResponse, Error> {
             }
         }
     }
-    Ok(HttpResponse::Ok().json(serde_json::json!({
+    Ok(HttpResponse::Ok().json(json!({
         "status": "success",
         "documents": files,
-        "count": files.len()
+        "count": files.len(),
+        "request_id": request_id
     })))
 }
 
 pub async fn delete_document(path: web::Path<String>) -> Result<HttpResponse, Error> {
+    let request_id = generate_request_id();
     let filename = path.into_inner();
     let filepath = format!("{}/{}", UPLOAD_DIR, filename);
     match fs::remove_file(&filepath) {
-        Ok(_) => Ok(HttpResponse::Ok().json(serde_json::json!({
+        Ok(_) => Ok(HttpResponse::Ok().json(json!({
             "status": "success",
-            "message": format!("Deleted {}", filename)
+            "message": format!("Deleted {}", filename),
+            "request_id": request_id
         }))),
-        Err(_) => Ok(HttpResponse::NotFound().json(serde_json::json!({
+        Err(_) => Ok(HttpResponse::NotFound().json(json!({
             "status": "error",
-            "message": "File not found"
+            "message": "File not found",
+            "request_id": request_id
         })))
     }
 }
 
 pub async fn reindex_handler() -> Result<HttpResponse, Error> {
+    let request_id = generate_request_id();
+    
+    // Phase 15: Check concurrency
+    if REINDEX_IN_PROGRESS.compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst).is_err() {
+        return Ok(HttpResponse::TooManyRequests().json(json!({
+            "status": "busy",
+            "message": "Reindex already in progress",
+            "request_id": request_id
+        })));
+    }
+
     if let Some(retriever) = RETRIEVER.get() {
         let mut retriever = retriever.lock().unwrap();
-        index::index_all_documents(&mut *retriever, UPLOAD_DIR);
-        Ok(HttpResponse::Ok().json(serde_json::json!({
+        let _ = index::index_all_documents(&mut *retriever, UPLOAD_DIR);
+        REINDEX_IN_PROGRESS.store(false, Ordering::SeqCst);
+        Ok(HttpResponse::Ok().json(json!({
             "status": "success",
-            "message": "Reindexing complete"
+            "message": "Reindexing complete",
+            "request_id": request_id
         })))
     } else {
-        Ok(HttpResponse::InternalServerError().json(serde_json::json!({
+        REINDEX_IN_PROGRESS.store(false, Ordering::SeqCst);
+        Ok(HttpResponse::InternalServerError().json(json!({
             "status": "error",
-            "message": "Retriever not initialized"
+            "message": "Retriever not initialized",
+            "request_id": request_id
         })))
     }
 }
 
-// ============ Search & Retrieval ============
+/// Phase 15: Async reindex endpoint
+pub async fn reindex_async_handler() -> Result<HttpResponse, Error> {
+    let request_id = generate_request_id();
+    let job_id = Uuid::new_v4().to_string();
+    
+    // Check if already reindexing
+    if REINDEX_IN_PROGRESS.compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst).is_err() {
+        return Ok(HttpResponse::TooManyRequests().json(json!({
+            "status": "busy",
+            "message": "Reindex already in progress",
+            "request_id": request_id
+        })));
+    }
+
+    let job = AsyncJob {
+        job_id: job_id.clone(),
+        status: "pending".to_string(),
+        started_at: Utc::now().to_rfc3339(),
+        completed_at: None,
+        vectors_indexed: None,
+        mappings_indexed: None,
+        error: None,
+    };
+
+    let jobs = get_jobs_map();
+    jobs.lock().unwrap().insert(job_id.clone(), job.clone());
+
+    // Spawn async task (non-blocking)
+    let job_id_clone = job_id.clone();
+    let retriever_handle = RETRIEVER.get().map(|h| Arc::clone(h));
+    
+    actix_web::rt::spawn(async move {
+        if let Some(retriever) = retriever_handle {
+            let mut retriever = retriever.lock().unwrap();
+            let mut job = jobs.lock().unwrap().get(&job_id_clone).cloned().unwrap();
+            job.status = "running".to_string();
+            jobs.lock().unwrap().insert(job_id_clone.clone(), job);
+
+            let _ = index::index_all_documents(&mut *retriever, UPLOAD_DIR);
+
+            let mut job = jobs.lock().unwrap().get(&job_id_clone).cloned().unwrap();
+            job.status = "completed".to_string();
+            job.completed_at = Some(Utc::now().to_rfc3339());
+            job.vectors_indexed = Some(retriever.metrics.total_vectors);
+            job.mappings_indexed = Some(retriever.metrics.total_documents_indexed);
+            jobs.lock().unwrap().insert(job_id_clone.clone(), job);
+        }
+        REINDEX_IN_PROGRESS.store(false, Ordering::SeqCst);
+    });
+
+    Ok(HttpResponse::Accepted().json(json!({
+        "status": "accepted",
+        "job_id": job_id,
+        "request_id": request_id
+    })))
+}
+
+/// Phase 15: Check async job status
+pub async fn reindex_status_handler(path: web::Path<String>) -> Result<HttpResponse, Error> {
+    let request_id = generate_request_id();
+    let job_id = path.into_inner();
+    
+    let jobs = get_jobs_map();
+    let jobs_lock = jobs.lock().unwrap();
+    
+    if let Some(job) = jobs_lock.get(&job_id) {
+        Ok(HttpResponse::Ok().json(json!({
+            "status": job.status,
+            "job_id": job.job_id,
+            "started_at": job.started_at,
+            "completed_at": job.completed_at,
+            "vectors_indexed": job.vectors_indexed,
+            "mappings_indexed": job.mappings_indexed,
+            "error": job.error,
+            "request_id": request_id
+        })))
+    } else {
+        Ok(HttpResponse::NotFound().json(json!({
+            "status": "not_found",
+            "message": format!("Job {} not found", job_id),
+            "request_id": request_id
+        })))
+    }
+}
+
+/// Phase 15: Index info endpoint
+pub async fn index_info_handler() -> Result<HttpResponse, Error> {
+    let request_id = generate_request_id();
+    let in_ram = std::env::var("INDEX_IN_RAM")
+        .map(|v| v.to_lowercase() == "true" || v == "1")
+        .unwrap_or(false);
+
+    if let Some(retriever) = RETRIEVER.get() {
+        let retriever = retriever.lock().unwrap();
+        Ok(HttpResponse::Ok().json(json!({
+            "index_in_ram": in_ram,
+            "mode": if in_ram { "RAM (fast)" } else { "Disk (standard)" },
+            "warning": if in_ram { 
+                json!("INDEX_IN_RAM enabled: High memory usage for large datasets. Recommended for <100 docs only.")
+            } else { 
+                json!(null)
+            },
+            "total_documents": retriever.metrics.total_documents_indexed,
+            "total_vectors": retriever.metrics.total_vectors,
+            "request_id": request_id
+        })))
+    } else {
+        Ok(HttpResponse::InternalServerError().json(json!({
+            "status": "error",
+            "message": "Retriever not initialized",
+            "request_id": request_id
+        })))
+    }
+}
 
 pub async fn search_documents(query: web::Query<SearchQuery>) -> Result<HttpResponse, Error> {
+    let request_id = generate_request_id();
     if let Some(retriever) = RETRIEVER.get() {
         let mut retriever = retriever.lock().unwrap();
         let results = retriever.search(&query.q).unwrap_or_default();
-        Ok(HttpResponse::Ok().json(serde_json::json!({
+        Ok(HttpResponse::Ok().json(json!({
             "status": "success",
-            "results": results
+            "results": results,
+            "request_id": request_id
         })))
     } else {
-        Ok(HttpResponse::InternalServerError().json(serde_json::json!({
+        Ok(HttpResponse::InternalServerError().json(json!({
             "status": "error",
-            "message": "Retriever not initialized"
+            "message": "Retriever not initialized",
+            "request_id": request_id
         })))
     }
 }
 
 pub async fn rerank(request: web::Json<RerankRequest>) -> Result<HttpResponse, Error> {
+    let request_id = generate_request_id();
     if let Some(retriever) = RETRIEVER.get() {
         let retriever = retriever.lock().unwrap();
         let reranked = retriever.rerank_by_similarity(&request.query, &request.candidates);
-        Ok(HttpResponse::Ok().json(serde_json::json!({
+        Ok(HttpResponse::Ok().json(json!({
             "status": "success",
-            "results": reranked
+            "results": reranked,
+            "request_id": request_id
         })))
     } else {
-        Ok(HttpResponse::InternalServerError().json(serde_json::json!({
+        Ok(HttpResponse::InternalServerError().json(json!({
             "status": "error",
-            "message": "Retriever not initialized"
+            "message": "Retriever not initialized",
+            "request_id": request_id
         })))
     }
 }
 
 pub async fn summarize(request: web::Json<SummarizeRequest>) -> Result<HttpResponse, Error> {
+    let request_id = generate_request_id();
     if let Some(retriever) = RETRIEVER.get() {
         let retriever = retriever.lock().unwrap();
         let summary = retriever.summarize_chunks(&request.query, &request.candidates);
-        Ok(HttpResponse::Ok().json(serde_json::json!({
+        Ok(HttpResponse::Ok().json(json!({
             "status": "success",
-            "summary": summary
+            "summary": summary,
+            "request_id": request_id
         })))
     } else {
-        Ok(HttpResponse::InternalServerError().json(serde_json::json!({
+        Ok(HttpResponse::InternalServerError().json(json!({
             "status": "error",
-            "message": "Retriever not initialized"
+            "message": "Retriever not initialized",
+            "request_id": request_id
         })))
     }
 }
 
 pub async fn save_vectors_handler() -> Result<HttpResponse, Error> {
+    let request_id = generate_request_id();
     if let Some(retriever) = RETRIEVER.get() {
         let mut retriever = retriever.lock().unwrap();
         match retriever.force_save() {
-            Ok(_) => Ok(HttpResponse::Ok().json(serde_json::json!({
+            Ok(_) => Ok(HttpResponse::Ok().json(json!({
                 "status": "success",
                 "message": "Vectors saved successfully",
-                "vector_count": retriever.vectors.len()
+                "vector_count": retriever.vectors.len(),
+                "request_id": request_id
             }))),
-            Err(e) => Ok(HttpResponse::InternalServerError().json(serde_json::json!({
+            Err(e) => Ok(HttpResponse::InternalServerError().json(json!({
                 "status": "error",
-                "message": format!("Failed to save vectors: {}", e)
+                "message": format!("Failed to save vectors: {}", e),
+                "request_id": request_id
             })))
         }
     } else {
-        Ok(HttpResponse::InternalServerError().json(serde_json::json!({
+        Ok(HttpResponse::InternalServerError().json(json!({
             "status": "error",
-            "message": "Retriever not initialized"
+            "message": "Retriever not initialized",
+            "request_id": request_id
         })))
     }
 }
 
-// ============ Legacy RAG Memory (SQLite) ============
+#[derive(serde::Deserialize)]
+pub struct AgentRequest {
+    pub query: String,
+    #[serde(default = "default_top_k")] 
+    pub top_k: usize,
+}
+fn default_top_k() -> usize { 5 }
+fn default_limit() -> usize { 20 }
 
-pub async fn store_rag_memory(req: web::Json<StoreRagRequest>) -> Result<HttpResponse, Error> {
-    let mem = AgentMemory::new("agent.db")
-        .map_err(|e| actix_web::error::ErrorInternalServerError(e.to_string()))?;
-    let ts = Utc::now().to_rfc3339();
+#[derive(serde::Deserialize)]
+pub struct StoreRagRequest {
+    pub agent_id: String,
+    pub memory_type: String,
+    pub content: String,
+    pub timestamp: Option<String>,
+}
+
+#[derive(serde::Deserialize)]
+pub struct SearchRagRequest {
+    pub agent_id: String,
+    pub query: String,
+    #[serde(default = "default_top_k")] 
+    pub top_k: usize,
+}
+
+#[derive(serde::Deserialize)]
+pub struct RecallRagRequest {
+    pub agent_id: String,
+    #[serde(default = "default_limit")] 
+    pub limit: usize,
+}
+
+async fn store_rag_memory(req: web::Json<StoreRagRequest>) -> Result<HttpResponse, Error> {
+    let request_id = generate_request_id();
+    let mem = AgentMemory::new("agent.db").map_err(|e| actix_web::error::ErrorInternalServerError(e.to_string()))?;
+    let ts = req.timestamp.clone().unwrap_or_else(|| chrono::Utc::now().to_rfc3339());
     mem.store_rag(&req.agent_id, &req.memory_type, &req.content, &ts)
         .map_err(|e| actix_web::error::ErrorInternalServerError(e.to_string()))?;
-    Ok(HttpResponse::Ok().json(serde_json::json!({
+    Ok(HttpResponse::Ok().json(json!({ 
         "status": "success",
-        "message": "Memory stored"
+        "request_id": request_id
     })))
 }
 
-pub async fn search_rag_memory(req: web::Json<SearchRagRequest>) -> Result<HttpResponse, Error> {
-    let mem = AgentMemory::new("agent.db")
-        .map_err(|e| actix_web::error::ErrorInternalServerError(e.to_string()))?;
+async fn search_rag_memory(req: web::Json<SearchRagRequest>) -> Result<HttpResponse, Error> {
+    let request_id = generate_request_id();
+    let mem = AgentMemory::new("agent.db").map_err(|e| actix_web::error::ErrorInternalServerError(e.to_string()))?;
     let results: Vec<MemorySearchResult> = mem.search_rag(&req.agent_id, &req.query, req.top_k)
         .map_err(|e| actix_web::error::ErrorInternalServerError(e.to_string()))?;
-    Ok(HttpResponse::Ok().json(results))
+    Ok(HttpResponse::Ok().json(json!({
+        "results": results,
+        "request_id": request_id
+    })))
 }
 
-pub async fn recall_rag_memory(req: web::Json<RecallRagRequest>) -> Result<HttpResponse, Error> {
-    let mem = AgentMemory::new("agent.db")
-        .map_err(|e| actix_web::error::ErrorInternalServerError(e.to_string()))?;
+async fn recall_rag_memory(req: web::Json<RecallRagRequest>) -> Result<HttpResponse, Error> {
+    let request_id = generate_request_id();
+    let mem = AgentMemory::new("agent.db").map_err(|e| actix_web::error::ErrorInternalServerError(e.to_string()))?;
     let items: Vec<MemoryItem> = mem.recall_rag(&req.agent_id, req.limit)
         .map_err(|e| actix_web::error::ErrorInternalServerError(e.to_string()))?;
-    Ok(HttpResponse::Ok().json(items))
+    Ok(HttpResponse::Ok().json(json!({
+        "items": items,
+        "request_id": request_id
+    })))
 }
 
-// ============ Agent ============
-
-pub async fn run_agent(req: web::Json<AgentRequest>) -> Result<HttpResponse, Error> {
+async fn run_agent(req: web::Json<AgentRequest>) -> Result<HttpResponse, Error> {
+    let request_id = generate_request_id();
     if let Some(retriever) = RETRIEVER.get() {
         let agent = Agent::new("default", "agent.db", Arc::clone(retriever));
         let resp: AgentResponse = agent.run(&req.query, req.top_k);
-        Ok(HttpResponse::Ok().json(resp))
-    } else {
-        Ok(HttpResponse::InternalServerError().json(serde_json::json!({
-            "status": "error",
-            "message": "Retriever not initialized"
-        })))
-    }
-}
-
-// ============ API Server ============
-
-
-// ============ Phase 11 Step 3: L2 Cache Handlers - Version 1.0.0 ============
-
-/// Get L2 cache statistics
-/// GET /cache/stats
-pub async fn get_l2_cache_stats() -> Result<HttpResponse, Error> {
-    if let Some(retriever) = RETRIEVER.get() {
-        let retriever = retriever.lock().unwrap();
-        let stats = retriever.get_l2_cache_stats();
-        Ok(HttpResponse::Ok().json(stats))
-    } else {
-        Ok(HttpResponse::InternalServerError().json(serde_json::json!({
-            "status": "error",
-            "message": "Retriever not initialized"
-        })))
-    }
-}
-
-/// Clear L2 cache
-/// POST /cache/clear-l2
-pub async fn clear_l2_cache() -> Result<HttpResponse, Error> {
-    if let Some(retriever) = RETRIEVER.get() {
-        let mut retriever = retriever.lock().unwrap();
-        retriever.clear_l2_cache();
-        Ok(HttpResponse::Ok().json(serde_json::json!({
-            "status": "success",
-            "message": "L2 cache cleared"
+        Ok(HttpResponse::Ok().json(json!({
+            "response": resp,
+            "request_id": request_id
         })))
     } else {
-        Ok(HttpResponse::InternalServerError().json(serde_json::json!({
+        Ok(HttpResponse::InternalServerError().json(json!({
             "status": "error",
-            "message": "Retriever not initialized"
-        })))
-    }
-}
-
-/// Log cache statistics to console
-/// POST /cache/log
-pub async fn log_l2_cache_stats() -> Result<HttpResponse, Error> {
-    if let Some(retriever) = RETRIEVER.get() {
-        let retriever = retriever.lock().unwrap();
-        retriever.log_cache_stats();
-        Ok(HttpResponse::Ok().json(serde_json::json!({
-            "status": "success",
-            "message": "Cache stats logged to console"
-        })))
-    } else {
-        Ok(HttpResponse::InternalServerError().json(serde_json::json!({
-            "status": "error",
-            "message": "Retriever not initialized"
-        })))
-    }
-}
-
-
-// === Phase 12 Step 3: Redis L3 Cache Handlers - Version 1.0.0 ===
-
-/// Get Redis L3 cache status
-/// GET /cache/redis/status
-pub async fn get_redis_status() -> Result<HttpResponse, Error> {
-    if let Some(retriever) = RETRIEVER.get() {
-        let retriever = retriever.lock().unwrap();
-        let status = retriever.get_l3_cache_status();
-        Ok(HttpResponse::Ok().json(serde_json::json!({
-            "status": status,
-            "timestamp": Utc::now().to_rfc3339()
-        })))
-    } else {
-        Ok(HttpResponse::InternalServerError().json(serde_json::json!({
-            "status": "error",
-            "message": "Retriever not initialized"
-        })))
-    }
-}
-
-/// Get Redis connection info
-/// GET /cache/redis/info
-pub async fn get_redis_info() -> Result<HttpResponse, Error> {
-    if let Some(retriever) = RETRIEVER.get() {
-        let retriever = retriever.lock().unwrap();
-        let status = retriever.get_l3_cache_status();
-        Ok(HttpResponse::Ok().json(serde_json::json!({
-            "redis_status": status,
-            "message": "Use /cache/redis/status for more details"
-        })))
-    } else {
-        Ok(HttpResponse::InternalServerError().json(serde_json::json!({
-            "status": "error",
-            "message": "Retriever not initialized"
-        })))
-    }
-}
-
-/// Check Redis connectivity
-/// POST /cache/redis/ping
-pub async fn redis_ping() -> Result<HttpResponse, Error> {
-    if let Some(retriever) = RETRIEVER.get() {
-        let retriever = retriever.lock().unwrap();
-        let status = retriever.get_l3_cache_status();
-        if status.contains("ENABLED") {
-            Ok(HttpResponse::Ok().json(serde_json::json!({
-                "status": "success",
-                "message": "Redis L3 cache is available",
-                "redis_status": status
-            })))
-        } else {
-            Ok(HttpResponse::ServiceUnavailable().json(serde_json::json!({
-                "status": "unavailable",
-                "message": "Redis L3 cache is not available",
-                "redis_status": status
-            })))
-        }
-    } else {
-        Ok(HttpResponse::InternalServerError().json(serde_json::json!({
-            "status": "error",
-            "message": "Retriever not initialized"
-        })))
-    }
-}
-
-/// Get combined cache status (L1, L2, L3)
-/// GET /cache/status/all
-pub async fn get_all_cache_status() -> Result<HttpResponse, Error> {
-    if let Some(retriever) = RETRIEVER.get() {
-        let retriever = retriever.lock().unwrap();
-        let l2_stats = retriever.get_l2_cache_stats();
-        let l3_status = retriever.get_l3_cache_status();
-        
-        Ok(HttpResponse::Ok().json(serde_json::json!({
-            "l1_cache": "In-memory LRU (enabled)",
-            "l2_cache": {
-                "type": "Memory with TTL",
-                "hits": l2_stats.l2_hits,
-                "misses": l2_stats.l2_misses,
-                "total_items": l2_stats.total_items
-            },
-            "l3_cache": l3_status,
-            "timestamp": Utc::now().to_rfc3339()
-        })))
-    } else {
-        Ok(HttpResponse::InternalServerError().json(serde_json::json!({
-            "status": "error",
-            "message": "Retriever not initialized"
+            "message": "Retriever not initialized",
+            "request_id": request_id
         })))
     }
 }
 
 pub fn start_api_server(config: &ApiConfig) -> impl std::future::Future<Output = std::io::Result<()>> {
-    // Initialize Phase 4 services
-    let embedding_service = EmbeddingService::new(crate::embedder::EmbeddingConfig::default());
-    let embedding_service = Arc::new(embedding_service);
-
-    let vector_store = VectorStore::with_defaults()
-        .expect("Failed to initialize vector store");
-    let vector_store = Arc::new(tokio::sync::RwLock::new(vector_store));
-
-    let config_bind = config.bind_addr().to_string();
-
-    HttpServer::new(move || {
+    HttpServer::new(|| {
         let cors = Cors::default()
             .allowed_origin("http://127.0.0.1:3011")
             .allowed_origin("http://localhost:3011")
@@ -550,58 +585,32 @@ pub fn start_api_server(config: &ApiConfig) -> impl std::future::Future<Output =
                 actix_web::http::header::AUTHORIZATION,
             ])
             .max_age(3600);
-
+        
         App::new()
             .wrap(cors)
-            .app_data(web::Data::new(embedding_service.clone()))
-            .app_data(web::Data::new(vector_store.clone()))
-            // Core endpoints
             .route("/", web::get().to(root_handler))
             .route("/health", web::get().to(health_check))
             .route("/ready", web::get().to(ready_check))
             .route("/metrics", web::get().to(get_metrics))
-            // Document management
             .route("/upload", web::post().to(upload_document))
             .route("/documents", web::get().to(list_documents))
             .route("/documents/{filename}", web::delete().to(delete_document))
             .route("/reindex", web::post().to(reindex_handler))
-            // Search & retrieval
+            .route("/reindex/async", web::post().to(reindex_async_handler))
+            .route("/reindex/status/{job_id}", web::get().to(reindex_status_handler))
+            .route("/index/info", web::get().to(index_info_handler))
             .route("/search", web::get().to(search_documents))
             .route("/rerank", web::post().to(rerank))
             .route("/summarize", web::post().to(summarize))
             .route("/save_vectors", web::post().to(save_vectors_handler))
-            // Legacy RAG memory (SQLite)
+            // RAG memory endpoints
             .route("/memory/store_rag", web::post().to(store_rag_memory))
             .route("/memory/search_rag", web::post().to(search_rag_memory))
             .route("/memory/recall_rag", web::post().to(recall_rag_memory))
-            // Phase 4: New Memory API (Vector Store)
-            .route("/api/memory/health", web::get().to(memory_routes::memory_health))
-            .route("/api/memory/add", web::post().to(memory_routes::add_chunk))
-            .route("/api/memory/batch", web::post().to(memory_routes::add_chunks_batch))
-            .route("/api/memory/search", web::post().to(memory_routes::search_chunks))
-            .route("/api/memory/document/{document_id}", web::get().to(memory_routes::get_document_chunks))
-            .route("/api/memory/delete", web::delete().to(memory_routes::delete_chunk))
-            .route("/api/memory/stats", web::get().to(memory_routes::get_stats))
-            .route("/api/memory/clear", web::post().to(memory_routes::clear_store))
-            // Phase 8: Decision Engine Routes
-            .configure(decision_engine_routes::configure_decision_engine_routes)
-            // Phase 9: Tool routes
-            .configure(tool_routes::configure_tool_routes)
-            // Phase 10: Composer routes
-            .configure(composer_routes::configure_composer_routes)                    
-            // Phase 11: Cache management routes - Version 1.0.0
-            .route("/cache/stats", web::get().to(get_l2_cache_stats))
-            .route("/cache/clear-l2", web::post().to(clear_l2_cache))
-            .route("/cache/log", web::post().to(log_l2_cache_stats))
-            // Phase 12 Step 3: Redis L3 Cache routes - Version 1.0.0
-            .route("/cache/redis/status", web::get().to(get_redis_status))
-            .route("/cache/redis/info", web::get().to(get_redis_info))
-            .route("/cache/redis/ping", web::post().to(redis_ping))
-            .route("/cache/status/all", web::get().to(get_all_cache_status))
-            // Agent
+            // Agentic endpoint
             .route("/agent", web::post().to(run_agent))
     })
-    .bind(&config_bind)
-    .unwrap_or_else(|_| panic!("Failed to bind to {}", config_bind))
+    .bind(config.bind_addr())
+    .unwrap_or_else(|_| panic!("Failed to bind to {}", config.bind_addr()))
     .run()
 }

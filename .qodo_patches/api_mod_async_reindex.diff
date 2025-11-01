@@ -1,0 +1,250 @@
+*** Begin Patch
+*** Update File: src/api/mod.rs
+@@
+-use crate::monitoring::pprof;
++use crate::monitoring::pprof;
++use std::sync::Mutex as StdMutex;
++use std::time::Duration as StdDuration;
++
++// ============ Reindex Job Tracking (ASYNC) ============
++#[derive(Clone, Debug, serde::Serialize)]
++struct ReindexJob {
++    id: String,
++    status: String,        // "pending" | "success" | "error"
++    message: Option<String>,
++}
++
++static REINDEX_JOB: OnceLock<StdMutex<Option<ReindexJob>>> = OnceLock::new();
++
++fn set_reindex_job(job: ReindexJob) {
++    let cell = REINDEX_JOB.get_or_init(|| StdMutex::new(None));
++    if let Ok(mut guard) = cell.lock() {
++        *guard = Some(job);
++    }
++}
++
++fn get_reindex_job() -> Option<ReindexJob> {
++    let cell = REINDEX_JOB.get_or_init(|| StdMutex::new(None));
++    if let Ok(guard) = cell.lock() {
++        (*guard).clone()
++    } else {
++        None
++    }
++}
+@@
+ pub async fn reindex_handler() -> Result<HttpResponse, Error> {
+     let request_id = Uuid::new_v4().to_string();
+     let span_start = std::time::Instant::now();
+-    if let Some(_retriever) = RETRIEVER.get() {
++    if let Some(_retriever) = RETRIEVER.get() {
+         let pm = crate::path_manager::PathManager::default();
+-        // Early reject if already in progress
+-        if crate::api::is_reindex_in_progress() {
+-            tracing::warn!(request_id = %request_id, "reindex: BUSY - another reindex in progress");
+-            return Ok(HttpResponse::TooManyRequests().json(serde_json::json!({
+-                "status": "busy",
+-                "message": "Reindex already in progress",
+-                "request_id": request_id
+-            })));
+-        }
+-        // Suppress saves during atomic reindex + reload window
+-        tracing::info!(request_id = %request_id, "/reindex: START");
+-        crate::api::set_reindex_in_progress(true);
+-
+-        let result = crate::retriever::reindex_atomic(UPLOAD_DIR, &pm).await;
+-        let resp = match result {
+-            Ok((vectors, mappings)) => {
+-                if let Err(e) = reload_global_retriever() {
+-                    tracing::error!("Failed to reload retriever after reindex: {}", e);
+-                } else {
+-                    // Auto-compact the live index to reduce segment/file count
+-                    if let Some(handle) = RETRIEVER.get() {
+-                        if let Ok(mut ret) = handle.lock() {
+-                            if let Err(e) = ret.compact_index() {
+-                                tracing::warn!("Index compaction after reindex failed: {}", e);
+-                            } else {
+-                                tracing::info!("Index compaction after reindex: SUCCESS");
+-                            }
+-                        }
+-                    }
+-                }
+-                // Metrics: success + duration + refresh gauges
+-                let dur_ms = span_start.elapsed().as_millis() as f64;
+-                crate::monitoring::metrics::REINDEX_SUCCESS_TOTAL.inc();
+-                crate::monitoring::metrics::observe_reindex_duration_ms(dur_ms);
+-                if let Some(handle) = RETRIEVER.get() {
+-                    if let Ok(ret) = handle.lock() {
+-                        crate::monitoring::metrics::refresh_retriever_gauges(&ret);
+-                    }
+-                }
+-                let duration_ms = span_start.elapsed().as_millis();
+-                tracing::info!(request_id = %request_id, duration_ms = %duration_ms, vectors = vectors, mappings = mappings, "/reindex: SUCCESS");
+-                Ok(HttpResponse::Ok().json(serde_json::json!({
+-                    "status": "success",
+-                    "message": "Reindexing complete",
+-                    "vectors": vectors,
+-                    "mappings": mappings
+-                })))
+-            },
+-            Err(e) => {
+-                // Metrics: failure + duration
+-                let dur_ms = span_start.elapsed().as_millis() as f64;
+-                crate::monitoring::metrics::REINDEX_FAILURE_TOTAL.inc();
+-                crate::monitoring::metrics::observe_reindex_duration_ms(dur_ms);
+-                tracing::error!(request_id = %request_id, "/reindex: ERROR: {}", e);
+-                Ok(HttpResponse::InternalServerError().json(serde_json::json!({
+-                    "status": "error",
+-                    "message": e.to_string()
+-                })))
+-            },
+-        };
+-        crate::api::set_reindex_in_progress(false);
+-        tracing::info!(request_id = %request_id, "/reindex: END");
+-        resp
++        // Early reject if already in progress
++        if crate::api::is_reindex_in_progress() {
++            tracing::warn!(request_id = %request_id, "reindex: BUSY - another reindex in progress");
++            return Ok(HttpResponse::TooManyRequests().json(serde_json::json!({
++                "status": "busy",
++                "message": "Reindex already in progress",
++                "request_id": request_id
++            })));
++        }
++
++        let async_enabled = std::env::var("ASYNC_REINDEX").unwrap_or_default().eq_ignore_ascii_case("true");
++        if async_enabled {
++            // Issue a job id and spawn background task
++            let job_id = Uuid::new_v4().to_string();
++            set_reindex_job(ReindexJob { id: job_id.clone(), status: "pending".into(), message: None });
++            tracing::info!(request_id = %request_id, job_id = %job_id, "/reindex: ACCEPTED (async)");
++
++            // Spawn background job
++            let request_id_clone = request_id.clone();
++            tokio::spawn(async move {
++                crate::api::set_reindex_in_progress(true);
++                tracing::info!(request_id = %request_id_clone, "/reindex(job): START");
++                let result = crate::retriever::reindex_atomic(UPLOAD_DIR, &pm).await;
++                match result {
++                    Ok((vectors, mappings)) => {
++                        if let Err(e) = reload_global_retriever() {
++                            tracing::error!("Failed to reload retriever after reindex: {}", e);
++                        }
++                        // Schedule background compaction if enabled
++                        schedule_compaction_task();
++
++                        let dur_ms = span_start.elapsed().as_millis() as f64;
++                        crate::monitoring::metrics::REINDEX_SUCCESS_TOTAL.inc();
++                        crate::monitoring::metrics::observe_reindex_duration_ms(dur_ms);
++                        if let Some(handle) = RETRIEVER.get() {
++                            if let Ok(ret) = handle.lock() {
++                                crate::monitoring::metrics::refresh_retriever_gauges(&ret);
++                            }
++                        }
++                        tracing::info!(request_id = %request_id_clone, vectors = vectors, mappings = mappings, "/reindex(job): SUCCESS");
++                        set_reindex_job(ReindexJob { id: job_id, status: "success".into(), message: Some("Reindexing complete".into()) });
++                    }
++                    Err(e) => {
++                        let dur_ms = span_start.elapsed().as_millis() as f64;
++                        crate::monitoring::metrics::REINDEX_FAILURE_TOTAL.inc();
++                        crate::monitoring::metrics::observe_reindex_duration_ms(dur_ms);
++                        tracing::error!(request_id = %request_id_clone, "/reindex(job): ERROR: {}", e);
++                        set_reindex_job(ReindexJob { id: job_id, status: "error".into(), message: Some(e.to_string()) });
++                    }
++                }
++                crate::api::set_reindex_in_progress(false);
++                tracing::info!(request_id = %request_id_clone, "/reindex(job): END");
++            });
++
++            return Ok(HttpResponse::Accepted().json(serde_json::json!({
++                "status": "accepted",
++                "request_id": request_id,
++                "job_id": job_id
++            })));
++        }
++
++        // Synchronous path (fallback when ASYNC_REINDEX=false)
++        // Suppress saves during atomic reindex + reload window
++        tracing::info!(request_id = %request_id, "/reindex: START");
++        crate::api::set_reindex_in_progress(true);
++        let result = crate::retriever::reindex_atomic(UPLOAD_DIR, &pm).await;
++        let resp = match result {
++            Ok((vectors, mappings)) => {
++                if let Err(e) = reload_global_retriever() {
++                    tracing::error!("Failed to reload retriever after reindex: {}", e);
++                }
++                // Schedule background compaction if enabled
++                schedule_compaction_task();
++
++                let dur_ms = span_start.elapsed().as_millis() as f64;
++                crate::monitoring::metrics::REINDEX_SUCCESS_TOTAL.inc();
++                crate::monitoring::metrics::observe_reindex_duration_ms(dur_ms);
++                if let Some(handle) = RETRIEVER.get() {
++                    if let Ok(ret) = handle.lock() {
++                        crate::monitoring::metrics::refresh_retriever_gauges(&ret);
++                    }
++                }
++                let duration_ms = span_start.elapsed().as_millis();
++                tracing::info!(request_id = %request_id, duration_ms = %duration_ms, vectors = vectors, mappings = mappings, "/reindex: SUCCESS");
++                Ok(HttpResponse::Ok().json(serde_json::json!({
++                    "status": "success",
++                    "message": "Reindexing complete",
++                    "vectors": vectors,
++                    "mappings": mappings
++                })))
++            },
++            Err(e) => {
++                let dur_ms = span_start.elapsed().as_millis() as f64;
++                crate::monitoring::metrics::REINDEX_FAILURE_TOTAL.inc();
++                crate::monitoring::metrics::observe_reindex_duration_ms(dur_ms);
++                tracing::error!(request_id = %request_id, "/reindex: ERROR: {}", e);
++                Ok(HttpResponse::InternalServerError().json(serde_json::json!({
++                    "status": "error",
++                    "message": e.to_string()
++                })))
++            },
++        };
++        crate::api::set_reindex_in_progress(false);
++        tracing::info!(request_id = %request_id, "/reindex: END");
++        resp
+     } else {
+         Ok(HttpResponse::InternalServerError().json(serde_json::json!({
+             "status": "error",
+             "message": "Retriever not initialized"
+         })))
+     }
+ }
++
++/// GET /reindex/status - returns the current/last reindex job status
++pub async fn get_reindex_status() -> Result<HttpResponse, Error> {
++    if let Some(job) = get_reindex_job() {
++        Ok(HttpResponse::Ok().json(job))
++    } else {
++        Ok(HttpResponse::Ok().json(serde_json::json!({
++            "status": "idle"
++        })))
++    }
++}
++
++/// Schedule a background compaction if enabled via env flags
++fn schedule_compaction_task() {
++    let auto = std::env::var("AUTO_COMPACT_AFTER_REINDEX").unwrap_or_else(|_| "true".into());
++    if !auto.eq_ignore_ascii_case("true") { return; }
++    let delay_secs: u64 = std::env::var("COMPACT_DELAY_SECONDS").ok()
++        .and_then(|s| s.parse::<u64>().ok()).unwrap_or(5);
++    tokio::spawn(async move {
++        tokio::time::sleep(StdDuration::from_secs(delay_secs)).await;
++        if let Some(handle) = RETRIEVER.get() {
++            if let Ok(mut ret) = handle.lock() {
++                match ret.compact_index() {
++                    Ok(_) => tracing::info!("Background compaction: SUCCESS"),
++                    Err(e) => tracing::warn!("Background compaction: FAILED: {}", e),
++                }
++            }
++        }
++    });
++}
+@@
+             .route("/reindex", web::post().to(reindex_handler))
++            .route("/reindex/status", web::get().to(get_reindex_status))
++            .route("/maintenance/compact-index", web::post().to(schedule_compaction_handler))
+*** End Patch

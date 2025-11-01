@@ -16,9 +16,26 @@ pub mod metrics;
 pub mod tracing_config;
 pub mod health;
 pub mod handlers;
+pub mod pprof;
 
 pub use config::MonitoringConfig;
-pub use metrics::MetricsRegistry;
+pub use crate::monitoring::metrics::{
+    REGISTRY,
+    APP_INFO,
+    STARTUP_DURATION_MS,
+    REINDEX_SUCCESS_TOTAL,
+    REINDEX_FAILURE_TOTAL,
+    SEARCH_LATENCY_MS,
+    CACHE_HITS_TOTAL,
+    CACHE_MISSES_TOTAL,
+    DOCUMENTS_TOTAL,
+    VECTORS_TOTAL,
+    INDEX_SIZE_BYTES,
+    refresh_retriever_gauges,
+    observe_search_latency_ms,
+    observe_reindex_duration_ms,
+    export_prometheus,
+};
 pub use health::HealthStatus;
 
 use std::sync::Arc;
@@ -28,7 +45,6 @@ use std::time::Instant;
 #[derive(Clone)]
 pub struct MonitoringContext {
     pub config: MonitoringConfig,
-    pub metrics: Arc<MetricsRegistry>,
     pub health: Arc<health::HealthTracker>,
     pub startup_time: Instant,
 }
@@ -44,19 +60,22 @@ impl MonitoringContext {
         // Initialize tracing (logging)
         let _guard = tracing_config::init_tracing(&config)?;
         
-        // Initialize metrics
-        let metrics = Arc::new(MetricsRegistry::new(&config));
-        
+        // Metrics registry initialized on first use by Lazy statics
+
         // Initialize health tracker
         let health = Arc::new(health::HealthTracker::new());
         
         let startup_time = Instant::now();
         
-        tracing::info!("Monitoring system initialized");
+        // Log effective histogram buckets at startup for visibility
+        let search_buckets = crate::monitoring::metrics::__test_parse_buckets_env("SEARCH_HISTO_BUCKETS")
+            .unwrap_or(vec![1.0,2.0,5.0,10.0,20.0,50.0,100.0,250.0,500.0,1000.0]);
+        let reindex_buckets = crate::monitoring::metrics::__test_parse_buckets_env("REINDEX_HISTO_BUCKETS")
+            .unwrap_or(vec![50.0,100.0,250.0,500.0,1000.0,2000.0,5000.0,10000.0]);
+        tracing::info!(?search_buckets, ?reindex_buckets, "Monitoring system initialized with histogram buckets");
         
         Ok(Self {
             config,
-            metrics,
             health,
             startup_time,
         })
@@ -70,7 +89,7 @@ impl MonitoringContext {
     /// - Marks system as ready
     pub fn startup_complete(&self) {
         let startup_duration = self.startup_time.elapsed();
-        self.metrics.record_startup_time(startup_duration);
+        // You can record startup duration as a counter or gauge in Prometheus if desired.
         self.health.mark_ready();
         
         tracing::info!(
