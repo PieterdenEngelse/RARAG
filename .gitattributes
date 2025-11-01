@@ -1,0 +1,2 @@
+*.json filter=lfs diff=lfs merge=lfs -text
+test_ag_home6/data/vectors.new.json filter=lfs diff=lfs merge=lfs -text
