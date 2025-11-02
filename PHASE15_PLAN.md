@@ -281,11 +281,34 @@ Tasks:
 - Allow histogram buckets via env (optional):
   - `SEARCH_HISTO_BUCKETS` (comma-separated ms thresholds, e.g. `1,2,5,10,20,50,100,250,500,1000`)
   - `REINDEX_HISTO_BUCKETS` (comma-separated ms thresholds, e.g. `50,100,250,500,1000,2000,5000,10000`)
-  - Invalid tokens are ignored with a warning; if any token is invalid, built-in defaults are used.
+  - Invalid tokens are ignored (with a warning). Valid tokens are used; if no valid tokens remain, defaults are used.
   - Fallback to built-in defaults when not set.
+
+Examples (env format and fallback behavior):
+- Valid custom buckets:
+  - SEARCH_HISTO_BUCKETS="1,2,5,10,20,50,100,250,500,1000"
+  - REINDEX_HISTO_BUCKETS="50,100,250,500,1000,2000,5000,10000"
+  - Result: values are parsed, sorted, and deduplicated
+
+- Mixed/invalid values (lenient parsing):
+  - SEARCH_HISTO_BUCKETS="10,abc, , -,100"
+  - REINDEX_HISTO_BUCKETS="1000, 5000, not_a_number"
+  - Result: warning is logged; valid tokens are kept (e.g., [10,100] or [1000,5000]). If none valid, defaults are used.
+
+- Empty or unset:
+  - SEARCH_HISTO_BUCKETS unset or set to ""
+  - REINDEX_HISTO_BUCKETS unset or set to ",,,"
+  - Result: defaults are used
 
 Validation:
 - Launch with env variables and confirm new buckets appear in /monitoring/metrics exposition.
+
+Progress Update (Step 4 – Configurability – Logging and Metrics):
+- Implemented lenient parsing for histogram env vars (SEARCH_HISTO_BUCKETS, REINDEX_HISTO_BUCKETS): invalid tokens are ignored with a warning; valid tokens are used; if none valid or unset, defaults are applied. Parsed buckets are sorted and deduplicated.
+- Added src/monitoring/histogram_config.rs with unit tests covering defaults, valid/mixed inputs, and lenient behavior.
+- Added src/monitoring/metrics_config.rs providing ConfigurableMetricsRegistry to create histograms with configured buckets, plus tests (including duplicate registration handling).
+- Updated examples and documentation in this plan to match behavior.
+- Status: Step 4 COMPLETE ✅
 
 ## 5) Alerting Hooks (Optional)
 

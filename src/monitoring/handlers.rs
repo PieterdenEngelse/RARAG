@@ -142,7 +142,7 @@ mod tests {
     #[actix_web::test]
     async fn test_health_endpoint() {
         let config = super::super::config::MonitoringConfig::default();
-        let mut ctx = super::super::MonitoringContext::new(config)
+        let ctx = super::super::MonitoringContext::new(config)
             .expect("Failed to create context");
         // Mark ready and set components healthy to ensure 200
         ctx.health.mark_ready();

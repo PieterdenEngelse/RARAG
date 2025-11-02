@@ -17,6 +17,10 @@ pub mod tracing_config;
 pub mod health;
 pub mod handlers;
 pub mod pprof;
+pub mod histogram_config;
+pub mod metrics_config;
+pub mod config_phase15;
+
 
 pub use config::MonitoringConfig;
 pub use crate::monitoring::metrics::{
@@ -37,6 +41,7 @@ pub use crate::monitoring::metrics::{
     export_prometheus,
 };
 pub use health::HealthStatus;
+pub use histogram_config::HistogramBuckets;
 
 use std::sync::Arc;
 use std::time::Instant;
