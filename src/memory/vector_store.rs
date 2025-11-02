@@ -181,6 +181,13 @@ impl VectorStore {
         Self::new(VectorStoreConfig::default())
     }
 
+    /// Create with custom database path
+    pub fn with_db_path<P: Into<std::path::PathBuf>>(db_path: P) -> Result<Self, VectorStoreError> {
+        let mut cfg = VectorStoreConfig::default();
+        cfg.db_path = db_path.into();
+        Self::new(cfg)
+    }
+
     /// Create with custom capacity and policy
     pub fn with_capacity(
         max_vectors: usize,

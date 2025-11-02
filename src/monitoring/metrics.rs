@@ -1,230 +1,154 @@
-//! Prometheus metrics collection
-//! 
-//! Tracks:
-//! - API request latency (histogram)
-//! - API errors (counter)
-//! - Startup duration (gauge)
-//! - Database query performance (histogram)
-//! - Active connections (gauge)
-//! - Memory usage (gauge)
+use once_cell::sync::Lazy;
+use prometheus::{Encoder, TextEncoder, Registry, IntCounter, IntGauge, Histogram, HistogramOpts, Opts};
 
-use prometheus::{
-    Counter, CounterVec, Gauge, HistogramVec, 
-    Registry, Result as PrometheusResult, TextEncoder,
-};
-use super::config::MonitoringConfig;
+// Global Prometheus registry
+pub static REGISTRY: Lazy<Registry> = Lazy::new(|| Registry::new());
 
-pub struct MetricsRegistry {
-    registry: Registry,
-    
-    // API metrics
-    pub api_request_duration: HistogramVec,
-    pub api_errors: CounterVec,
-    pub api_requests_total: CounterVec,
-    
-    // Startup metrics
-    pub startup_duration_ms: Gauge,
-    
-    // Database metrics
-    pub db_query_duration: HistogramVec,
-    pub db_connections_active: Gauge,
-    pub db_errors: Counter,
-    
-    // System metrics
-    pub memory_usage_bytes: Gauge,
-    pub uptime_seconds: Gauge,
-}
+// App info gauge (const)
+pub static APP_INFO: Lazy<IntGauge> = Lazy::new(|| {
+    // Labels: app and version
+    let g = IntGauge::with_opts(
+        Opts::new("app_info", "Application info gauge")
+            .const_label("app", "ag")
+            .const_label("version", env!("CARGO_PKG_VERSION")),
+    )
+    .unwrap();
+    REGISTRY.register(Box::new(g.clone())).ok();
+    g
+});
 
-impl MetricsRegistry {
-    /// Create new metrics registry
-    pub fn new(_config: &MonitoringConfig) -> Self {
-        let registry = Registry::new();
-        
-        // API request latency histogram (buckets in ms: 10, 50, 100, 500, 1000, 5000)
-        let api_request_duration = HistogramVec::new(
-            prometheus::HistogramOpts::new(
-                "api_request_duration_ms",
-                "API request latency in milliseconds",
-            )
-            .buckets(vec![10.0, 50.0, 100.0, 500.0, 1000.0, 5000.0]),
-            &["endpoint", "method", "status"],
-        ).expect("Failed to create api_request_duration metric");
-        registry.register(Box::new(api_request_duration.clone()))
-            .expect("Failed to register api_request_duration");
-        
-        // API errors counter
-        let api_errors = CounterVec::new(
-            prometheus::opts!("api_errors_total", "Total API errors"),
-            &["endpoint", "status_code"],
-        ).expect("Failed to create api_errors metric");
-        registry.register(Box::new(api_errors.clone()))
-            .expect("Failed to register api_errors");
-        
-        // API requests total counter
-        let api_requests_total = CounterVec::new(
-            prometheus::opts!("api_requests_total", "Total API requests"),
-            &["endpoint", "method", "status"],
-        ).expect("Failed to create api_requests_total metric");
-        
-        // Startup duration gauge
-        let startup_duration_ms = Gauge::new(
-            "startup_duration_ms",
-            "Application startup duration in milliseconds",
-        ).expect("Failed to create startup_duration_ms metric");
-        registry.register(Box::new(startup_duration_ms.clone()))
-            .expect("Failed to register startup_duration_ms");
-        
-        // Database query duration histogram
-        let db_query_duration = HistogramVec::new(
-            prometheus::HistogramOpts::new(
-                "db_query_duration_ms",
-                "Database query duration in milliseconds",
-            )
-            .buckets(vec![10.0, 50.0, 100.0, 500.0, 1000.0]),
-            &["query_type"],
-        ).expect("Failed to create db_query_duration metric");
-        registry.register(Box::new(db_query_duration.clone()))
-            .expect("Failed to register db_query_duration");
-        
-        // Active database connections gauge
-        let db_connections_active = Gauge::new(
-            "db_connections_active",
-            "Currently active database connections",
-        ).expect("Failed to create db_connections_active metric");
-        registry.register(Box::new(db_connections_active.clone()))
-            .expect("Failed to register db_connections_active");
-        
-        // Database errors counter
-        let db_errors = Counter::new(
-            "db_errors_total",
-            "Total database errors",
-        ).expect("Failed to create db_errors metric");
-        registry.register(Box::new(db_errors.clone()))
-            .expect("Failed to register db_errors");
-        
-        // Memory usage gauge
-        let memory_usage_bytes = Gauge::new(
-            "memory_usage_bytes",
-            "Current memory usage in bytes",
-        ).expect("Failed to create memory_usage_bytes metric");
-        registry.register(Box::new(memory_usage_bytes.clone()))
-            .expect("Failed to register memory_usage_bytes");
-        
-        // Uptime gauge
-        let uptime_seconds = Gauge::new(
-            "uptime_seconds",
-            "Application uptime in seconds",
-        ).expect("Failed to create uptime_seconds metric");
-        registry.register(Box::new(uptime_seconds.clone()))
-            .expect("Failed to register uptime_seconds");
-        
-        Self {
-            registry,
-            api_request_duration,
-            api_errors,
-            api_requests_total,
-            startup_duration_ms,
-            db_query_duration,
-            db_connections_active,
-            db_errors,
-            memory_usage_bytes,
-            uptime_seconds,
+// Startup duration
+pub static STARTUP_DURATION_MS: Lazy<IntGauge> = Lazy::new(|| {
+    let g = IntGauge::new("startup_duration_ms", "Application startup duration in milliseconds").unwrap();
+    REGISTRY.register(Box::new(g.clone())).ok();
+    g
+});
+
+// Reindex metrics
+pub static REINDEX_SUCCESS_TOTAL: Lazy<IntCounter> = Lazy::new(|| {
+    let c = IntCounter::new("reindex_success_total", "Total successful reindex operations").unwrap();
+    REGISTRY.register(Box::new(c.clone())).ok();
+    c
+});
+
+pub static REINDEX_FAILURE_TOTAL: Lazy<IntCounter> = Lazy::new(|| {
+    let c = IntCounter::new("reindex_failure_total", "Total failed reindex operations").unwrap();
+    REGISTRY.register(Box::new(c.clone())).ok();
+    c
+});
+
+#[doc(hidden)]
+pub fn __test_parse_buckets_env(var: &str) -> Option<Vec<f64>> { parse_buckets_env(var) }
+
+fn parse_buckets_env(var: &str) -> Option<Vec<f64>> {
+    match std::env::var(var) {
+        Ok(val) if !val.trim().is_empty() => {
+            let mut parsed: Vec<f64> = Vec::new();
+            for tok in val.split(',') {
+                let t = tok.trim();
+                if t.is_empty() { continue; }
+                match t.parse::<f64>() {
+                    Ok(v) if v > 0.0 => parsed.push(v),
+                    _ => {
+                        tracing::warn!(env_var = %var, token = %t, "Invalid histogram bucket value; ignoring");
+                        return None;
+                    }
+                }
+            }
+            if parsed.is_empty() {
+                None
+            } else {
+                parsed.sort_by(|a, b| a.partial_cmp(b).unwrap());
+                Some(parsed)
+            }
         }
-    }
-    
-    /// Record API request
-    pub fn record_api_request(
-        &self,
-        endpoint: &str,
-        method: &str,
-        status_code: u16,
-        duration_ms: f64,
-    ) {
-        let status = match status_code {
-            200..=299 => "2xx",
-            300..=399 => "3xx",
-            400..=499 => "4xx",
-            _ => "5xx",
-        };
-        
-        self.api_request_duration
-            .with_label_values(&[endpoint, method, status])
-            .observe(duration_ms);
-        
-        self.api_requests_total
-            .with_label_values(&[endpoint, method, status])
-            .inc();
-        
-        if status_code >= 400 {
-            self.api_errors
-                .with_label_values(&[endpoint, &status_code.to_string()])
-                .inc();
-        }
-    }
-    
-    /// Record startup time
-    pub fn record_startup_time(&self, duration: std::time::Duration) {
-        self.startup_duration_ms.set(duration.as_millis() as f64);
-    }
-    
-    /// Record database query
-    pub fn record_db_query(&self, query_type: &str, duration_ms: f64) {
-        self.db_query_duration
-            .with_label_values(&[query_type])
-            .observe(duration_ms);
-    }
-    
-    /// Update active database connections
-    pub fn set_active_connections(&self, count: f64) {
-        self.db_connections_active.set(count);
-    }
-    
-    /// Increment database errors
-    pub fn inc_db_errors(&self) {
-        self.db_errors.inc();
-    }
-    
-    /// Update memory usage
-    pub fn set_memory_usage(&self, bytes: f64) {
-        self.memory_usage_bytes.set(bytes);
-    }
-    
-    /// Update uptime
-    pub fn set_uptime(&self, seconds: f64) {
-        self.uptime_seconds.set(seconds);
-    }
-    
-    /// Export metrics in Prometheus text format
-    pub fn export(&self) -> PrometheusResult<String> {
-        let encoder = TextEncoder::new();
-        encoder.encode_to_string(&self.registry.gather())
+        _ => None,
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-    
-    #[test]
-    fn test_metrics_registry_creation() {
-        let config = super::super::config::MonitoringConfig::default();
-        let metrics = MetricsRegistry::new(&config);
-        
-        // Should export successfully
-        let export = metrics.export();
-        assert!(export.is_ok());
+pub static REINDEX_DURATION_MS: Lazy<Histogram> = Lazy::new(|| {
+    let default = vec![50.0, 100.0, 250.0, 500.0, 1000.0, 2000.0, 5000.0, 10000.0];
+    let buckets = parse_buckets_env("REINDEX_HISTO_BUCKETS").unwrap_or(default);
+    let h = Histogram::with_opts(
+        HistogramOpts::new("reindex_duration_ms", "Reindex duration in milliseconds")
+            .buckets(buckets),
+    )
+    .unwrap();
+    REGISTRY.register(Box::new(h.clone())).ok();
+    h
+});
+
+// Search metrics
+pub static SEARCH_LATENCY_MS: Lazy<Histogram> = Lazy::new(|| {
+    let default = vec![1.0, 2.0, 5.0, 10.0, 20.0, 50.0, 100.0, 250.0, 500.0, 1000.0];
+    let buckets = parse_buckets_env("SEARCH_HISTO_BUCKETS").unwrap_or(default);
+    let h = Histogram::with_opts(
+        HistogramOpts::new("search_latency_ms", "Search latency in milliseconds")
+            .buckets(buckets),
+    )
+    .unwrap();
+    REGISTRY.register(Box::new(h.clone())).ok();
+    h
+});
+
+pub static CACHE_HITS_TOTAL: Lazy<IntCounter> = Lazy::new(|| {
+    let c = IntCounter::new("cache_hits_total", "Total cache hits").unwrap();
+    REGISTRY.register(Box::new(c.clone())).ok();
+    c
+});
+
+pub static CACHE_MISSES_TOTAL: Lazy<IntCounter> = Lazy::new(|| {
+    let c = IntCounter::new("cache_misses_total", "Total cache misses").unwrap();
+    REGISTRY.register(Box::new(c.clone())).ok();
+    c
+});
+
+// State gauges
+pub static DOCUMENTS_TOTAL: Lazy<IntGauge> = Lazy::new(|| {
+    let g = IntGauge::new("documents_total", "Total number of indexed documents").unwrap();
+    REGISTRY.register(Box::new(g.clone())).ok();
+    g
+});
+
+pub static VECTORS_TOTAL: Lazy<IntGauge> = Lazy::new(|| {
+    let g = IntGauge::new("vectors_total", "Total number of vectors").unwrap();
+    REGISTRY.register(Box::new(g.clone())).ok();
+    g
+});
+
+pub static INDEX_SIZE_BYTES: Lazy<IntGauge> = Lazy::new(|| {
+    let g = IntGauge::new("index_size_bytes", "Index size in bytes (approximate)").unwrap();
+    REGISTRY.register(Box::new(g.clone())).ok();
+    g
+});
+
+// Helper to update gauges from retriever
+pub fn refresh_retriever_gauges(retriever: &crate::retriever::Retriever) {
+    DOCUMENTS_TOTAL.set(retriever.metrics.total_documents_indexed as i64);
+    VECTORS_TOTAL.set(retriever.metrics.total_vectors as i64);
+    if let Ok(size) = retriever.metrics.get_index_size_bytes() {
+        INDEX_SIZE_BYTES.set(size as i64);
     }
-    
-    #[test]
-    fn test_record_api_request() {
-        let config = super::super::config::MonitoringConfig::default();
-        let metrics = MetricsRegistry::new(&config);
-        
-        metrics.record_api_request("/search", "GET", 200, 45.5);
-        metrics.record_api_request("/search", "GET", 500, 1500.0);
-        
-        let export = metrics.export().unwrap();
-        assert!(export.contains("api_request_duration_ms"));
-        assert!(export.contains("api_requests_total"));
+}
+
+// Observe search latency in ms
+pub fn observe_search_latency_ms(duration_ms: f64) {
+    SEARCH_LATENCY_MS.observe(duration_ms);
+}
+
+// Record reindex duration in ms
+pub fn observe_reindex_duration_ms(duration_ms: f64) {
+    REINDEX_DURATION_MS.observe(duration_ms);
+}
+
+// Exporter for Prometheus text format
+pub fn export_prometheus() -> String {
+    let metric_families = REGISTRY.gather();
+    let encoder = TextEncoder::new();
+    let mut buffer = Vec::new();
+    if encoder.encode(&metric_families, &mut buffer).is_ok() {
+        String::from_utf8(buffer).unwrap_or_default()
+    } else {
+        "".to_string()
     }
 }

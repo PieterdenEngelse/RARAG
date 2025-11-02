@@ -1,0 +1,18 @@
+*** Begin Patch
+*** Update File: src/api/mod.rs
+@@
+ use chrono::Utc;
+@@
+ async fn prometheus_metrics() -> Result<HttpResponse, Error> {
+@@
+ }
++
++/// POST /maintenance/compact-index - schedule background compaction
++pub async fn schedule_compaction_handler() -> Result<HttpResponse, Error> {
++    schedule_compaction_task();
++    Ok(HttpResponse::Accepted().json(serde_json::json!({
++        "status": "accepted",
++        "message": "Compaction scheduled"
++    })))
++}
+*** End Patch
