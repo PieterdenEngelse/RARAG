@@ -319,9 +319,17 @@ Tasks:
 - If `REINDEX_WEBHOOK_URL` is set, POST a JSON payload on reindex finish:
   - { status: "success"|"error", duration_ms, vectors, mappings, timestamp }
   - Non-blocking; log warnings on failures, do not fail the request.
+- Integrate hooks into actual reindex handler:
+  - On both success and error paths of /reindex (and /reindex/async completion), construct payload and dispatch webhook asynchronously.
+  - Include optional request_id in payload when available for correlation.
+  - Use a lightweight async HTTP client (reqwest) and spawn task; time out requests reasonably (e.g., 3–5s) to avoid blocking shutdown.
 
 Validation:
 - With webhook set, verify receipt and payload fields on success and failure cases.
+- Test with real webhook endpoint:
+  - Example: `REINDEX_WEBHOOK_URL=https://webhook.site/<uuid>`
+  - Run reindex then inspect received payloads for required fields and values.
+  - Simulate failure by using an invalid URL and confirm warning logs without affecting API response.
 
 ## 6) Security and Hardening – Rate Limiting (Optional)
 

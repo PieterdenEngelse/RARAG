@@ -20,6 +20,7 @@ pub mod pprof;
 pub mod histogram_config;
 pub mod metrics_config;
 pub mod config_phase15;
+pub mod alerting_hooks;
 
 
 pub use config::MonitoringConfig;
@@ -42,6 +43,7 @@ pub use crate::monitoring::metrics::{
 };
 pub use health::HealthStatus;
 pub use histogram_config::HistogramBuckets;
+pub use alerting_hooks::{AlertingHooksConfig, ReindexCompletionEvent};
 
 use std::sync::Arc;
 use std::time::Instant;

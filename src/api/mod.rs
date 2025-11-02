@@ -263,7 +263,8 @@ pub async fn delete_document(path: web::Path<String>) -> Result<HttpResponse, Er
 
 pub async fn reindex_handler() -> Result<HttpResponse, Error> {
     let request_id = generate_request_id();
-    
+    let start = std::time::Instant::now();
+
     // Phase 15: Check concurrency
     if REINDEX_IN_PROGRESS.compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst).is_err() {
         return Ok(HttpResponse::TooManyRequests().json(json!({
@@ -273,17 +274,46 @@ pub async fn reindex_handler() -> Result<HttpResponse, Error> {
         })));
     }
 
+    // Alerting config
+    let hooks = crate::monitoring::alerting_hooks::AlertingHooksConfig::from_env();
+
     if let Some(retriever) = RETRIEVER.get() {
         let mut retriever = retriever.lock().unwrap();
-        let _ = index::index_all_documents(&mut *retriever, UPLOAD_DIR);
+        let res = index::index_all_documents(&mut *retriever, UPLOAD_DIR);
+        let duration_ms = start.elapsed().as_millis() as u64;
+        let vectors = retriever.metrics.total_vectors as u64;
+        let mappings = retriever.metrics.total_documents_indexed as u64;
         REINDEX_IN_PROGRESS.store(false, Ordering::SeqCst);
-        Ok(HttpResponse::Ok().json(json!({
-            "status": "success",
-            "message": "Reindexing complete",
-            "request_id": request_id
-        })))
+
+        // Fire webhook (non-blocking)
+        let event = match res {
+            Ok(_) => crate::monitoring::alerting_hooks::ReindexCompletionEvent::success(duration_ms, vectors, mappings),
+            Err(_) => crate::monitoring::alerting_hooks::ReindexCompletionEvent::error(duration_ms, vectors, mappings),
+        };
+        actix_web::rt::spawn(async move {
+            crate::monitoring::alerting_hooks::send_alert(&hooks, event).await;
+        });
+
+        match res {
+            Ok(_) => Ok(HttpResponse::Ok().json(json!({
+                "status": "success",
+                "message": "Reindexing complete",
+                "request_id": request_id
+            }))),
+            Err(e) => Ok(HttpResponse::InternalServerError().json(json!({
+                "status": "error",
+                "message": format!("Reindex failed: {}", e),
+                "request_id": request_id
+            }))),
+        }
     } else {
         REINDEX_IN_PROGRESS.store(false, Ordering::SeqCst);
+        // Fire error webhook for missing retriever
+        let hooks2 = crate::monitoring::alerting_hooks::AlertingHooksConfig::from_env();
+        let event = crate::monitoring::alerting_hooks::ReindexCompletionEvent::error(0, 0, 0);
+        actix_web::rt::spawn(async move {
+            crate::monitoring::alerting_hooks::send_alert(&hooks2, event).await;
+        });
         Ok(HttpResponse::InternalServerError().json(json!({
             "status": "error",
             "message": "Retriever not initialized",
@@ -324,19 +354,38 @@ pub async fn reindex_async_handler() -> Result<HttpResponse, Error> {
     let retriever_handle = RETRIEVER.get().map(|h| Arc::clone(h));
     
     actix_web::rt::spawn(async move {
+        let start = std::time::Instant::now();
+        let hooks = crate::monitoring::alerting_hooks::AlertingHooksConfig::from_env();
         if let Some(retriever) = retriever_handle {
             let mut retriever = retriever.lock().unwrap();
             let mut job = jobs.lock().unwrap().get(&job_id_clone).cloned().unwrap();
             job.status = "running".to_string();
             jobs.lock().unwrap().insert(job_id_clone.clone(), job);
 
-            let _ = index::index_all_documents(&mut *retriever, UPLOAD_DIR);
+            let res = index::index_all_documents(&mut *retriever, UPLOAD_DIR);
 
             let mut job = jobs.lock().unwrap().get(&job_id_clone).cloned().unwrap();
-            job.status = "completed".to_string();
-            job.completed_at = Some(Utc::now().to_rfc3339());
-            job.vectors_indexed = Some(retriever.metrics.total_vectors);
-            job.mappings_indexed = Some(retriever.metrics.total_documents_indexed);
+            let duration_ms = start.elapsed().as_millis() as u64;
+            let vectors = retriever.metrics.total_vectors as u64;
+            let mappings = retriever.metrics.total_documents_indexed as u64;
+
+            match res {
+                Ok(_) => {
+                    job.status = "completed".to_string();
+                    job.completed_at = Some(Utc::now().to_rfc3339());
+                    job.vectors_indexed = Some(vectors as usize);
+                    job.mappings_indexed = Some(mappings as usize);
+                    let event = crate::monitoring::alerting_hooks::ReindexCompletionEvent::success(duration_ms, vectors, mappings);
+                    crate::monitoring::alerting_hooks::send_alert(&hooks, event).await;
+                }
+                Err(e) => {
+                    job.status = "failed".to_string();
+                    job.completed_at = Some(Utc::now().to_rfc3339());
+                    job.error = Some(e.to_string());
+                    let event = crate::monitoring::alerting_hooks::ReindexCompletionEvent::error(duration_ms, vectors, mappings);
+                    crate::monitoring::alerting_hooks::send_alert(&hooks, event).await;
+                }
+            }
             jobs.lock().unwrap().insert(job_id_clone.clone(), job);
         }
         REINDEX_IN_PROGRESS.store(false, Ordering::SeqCst);
@@ -611,6 +660,6 @@ pub fn start_api_server(config: &ApiConfig) -> impl std::future::Future<Output =
             .route("/agent", web::post().to(run_agent))
     })
     .bind(config.bind_addr())
-    .unwrap_or_else(|_| panic!("Failed to bind to {}", config.bind_addr()))
+    .unwrap_or_else(|e| panic!("Failed to bind to {}: {}", config.bind_addr(), e))
     .run()
 }
