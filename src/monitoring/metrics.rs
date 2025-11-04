@@ -1,5 +1,5 @@
 use once_cell::sync::Lazy;
-use prometheus::{Encoder, TextEncoder, Registry, IntCounter, IntGauge, Histogram, HistogramOpts, Opts};
+use prometheus::{Encoder, TextEncoder, Registry, IntCounter, IntCounterVec, IntGauge, Histogram, HistogramOpts, Opts};
 
 // Global Prometheus registry
 pub static REGISTRY: Lazy<Registry> = Lazy::new(|| Registry::new());
@@ -103,6 +103,21 @@ pub static CACHE_MISSES_TOTAL: Lazy<IntCounter> = Lazy::new(|| {
     c
 });
 
+pub static RATE_LIMIT_DROPS_TOTAL: Lazy<IntCounter> = Lazy::new(|| {
+    let c = IntCounter::new("rate_limit_drops_total", "Total requests dropped due to rate limit").unwrap();
+    REGISTRY.register(Box::new(c.clone())).ok();
+    c
+});
+
+pub static RATE_LIMIT_DROPS_BY_ROUTE: Lazy<IntCounterVec> = Lazy::new(|| {
+    let cv = IntCounterVec::new(
+        Opts::new("rate_limit_drops_by_route_total", "Rate limit drops partitioned by route"),
+        &["route"],
+    ).unwrap();
+    REGISTRY.register(Box::new(cv.clone())).ok();
+    cv
+});
+
 // State gauges
 pub static DOCUMENTS_TOTAL: Lazy<IntGauge> = Lazy::new(|| {
     let g = IntGauge::new("documents_total", "Total number of indexed documents").unwrap();
@@ -120,6 +135,14 @@ pub static INDEX_SIZE_BYTES: Lazy<IntGauge> = Lazy::new(|| {
     let g = IntGauge::new("index_size_bytes", "Index size in bytes (approximate)").unwrap();
     REGISTRY.register(Box::new(g.clone())).ok();
     g
+});
+
+pub static REQUEST_LATENCY_MS: Lazy<prometheus::HistogramVec> = Lazy::new(|| {
+    use prometheus::{HistogramVec, histogram_opts};
+    let opts = histogram_opts!("request_latency_ms", "HTTP request latency in milliseconds");
+    let hv = HistogramVec::new(opts, &["method", "route", "status_class"]).unwrap();
+    REGISTRY.register(Box::new(hv.clone())).ok();
+    hv
 });
 
 // Helper to update gauges from retriever

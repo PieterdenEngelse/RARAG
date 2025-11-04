@@ -21,6 +21,9 @@ pub mod histogram_config;
 pub mod metrics_config;
 pub mod config_phase15;
 pub mod alerting_hooks;
+pub mod distributed_tracing;
+pub mod trace_middleware;
+pub mod performance_analysis;
 
 
 pub use config::MonitoringConfig;
@@ -33,6 +36,8 @@ pub use crate::monitoring::metrics::{
     SEARCH_LATENCY_MS,
     CACHE_HITS_TOTAL,
     CACHE_MISSES_TOTAL,
+    RATE_LIMIT_DROPS_TOTAL,
+    RATE_LIMIT_DROPS_BY_ROUTE,
     DOCUMENTS_TOTAL,
     VECTORS_TOTAL,
     INDEX_SIZE_BYTES,

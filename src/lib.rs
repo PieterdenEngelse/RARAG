@@ -18,3 +18,5 @@ pub mod tools;
 pub mod cache;
 pub mod installer;
 pub mod monitoring;
+pub use monitoring::trace_middleware;
+pub use monitoring::performance_analysis;

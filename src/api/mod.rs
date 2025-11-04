@@ -8,6 +8,8 @@ use std::path::Path;
 use std::sync::{Arc, Mutex, OnceLock};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::collections::HashMap;
+use lru::LruCache;
+use std::num::NonZeroUsize;
 use tracing::error;
 use serde_json::json;
 use crate::retriever::Retriever;
@@ -53,6 +55,60 @@ static RETRIEVER: OnceLock<Arc<Mutex<Retriever>>> = OnceLock::new();
 
 pub fn set_retriever_handle(handle: Arc<Mutex<Retriever>>) {
     let _ = RETRIEVER.set(handle);
+}
+
+// Phase 15: Simple per-IP rate limiting (token bucket)
+#[derive(Clone, Debug)]
+struct Bucket { tokens: f64, last_refill: std::time::Instant }
+
+static RATE_LIMIT_ENABLED: OnceLock<bool> = OnceLock::new();
+static RATE_LIMIT_QPS: OnceLock<f64> = OnceLock::new();
+static RATE_LIMIT_BURST: OnceLock<f64> = OnceLock::new();
+static RL_MAP: OnceLock<Arc<Mutex<LruCache<String, Bucket>>>> = OnceLock::new();
+static TRUST_PROXY: OnceLock<bool> = OnceLock::new();
+static SEARCH_QPS: OnceLock<f64> = OnceLock::new();
+static SEARCH_BURST: OnceLock<f64> = OnceLock::new();
+static UPLOAD_QPS: OnceLock<f64> = OnceLock::new();
+static UPLOAD_BURST: OnceLock<f64> = OnceLock::new();
+
+fn init_rate_limit_from_config(config: &crate::config::ApiConfig) {
+    let _ = RATE_LIMIT_ENABLED.set(config.rate_limit_enabled);
+    let _ = RATE_LIMIT_QPS.set(config.rate_limit_qps.max(0.0));
+    let _ = RATE_LIMIT_BURST.set(config.rate_limit_burst as f64);
+    let _ = TRUST_PROXY.set(config.trust_proxy);
+    let _ = SEARCH_QPS.set(config.rate_limit_search_qps.unwrap_or(config.rate_limit_qps).max(0.0));
+    let _ = SEARCH_BURST.set(config.rate_limit_search_burst.unwrap_or(config.rate_limit_burst) as f64);
+    let _ = UPLOAD_QPS.set(config.rate_limit_upload_qps.unwrap_or(config.rate_limit_qps).max(0.0));
+    let _ = UPLOAD_BURST.set(config.rate_limit_upload_burst.unwrap_or(config.rate_limit_burst) as f64);
+    // LRU for last N IPs (configurable)
+    let cap = NonZeroUsize::new(config.rate_limit_lru_capacity.max(1)).unwrap();
+    let _ = RL_MAP.set(Arc::new(Mutex::new(LruCache::new(cap))));
+}
+
+fn allow_request_for_ip(ip: &str, qps: f64, burst: f64) -> bool {
+    if !*RATE_LIMIT_ENABLED.get().unwrap_or(&false) {
+        return true;
+    }
+
+    let now = std::time::Instant::now();
+    let mut map = RL_MAP.get().expect("RL_MAP not initialized").lock().unwrap();
+    let b = map.get_mut(ip);
+    if let Some(bucket) = b {
+        // refill tokens
+        let elapsed = now.duration_since(bucket.last_refill).as_secs_f64();
+        bucket.tokens = (bucket.tokens + elapsed * qps).min(burst);
+        bucket.last_refill = now;
+        if bucket.tokens >= 1.0 {
+            bucket.tokens -= 1.0;
+            true
+        } else {
+            false
+        }
+    } else {
+        // create new bucket with full burst minus one token
+        map.put(ip.to_string(), Bucket { tokens: (burst - 1.0).max(0.0), last_refill: now });
+        burst >= 1.0
+    }
 }
 
 #[derive(serde::Deserialize)]
@@ -186,7 +242,46 @@ async fn get_metrics() -> Result<HttpResponse, Error> {
     }
 }
 
-pub async fn upload_document(mut payload: Multipart) -> Result<HttpResponse, Error> {
+fn get_remote_ip(req: &actix_web::HttpRequest) -> String {
+    let trust = *TRUST_PROXY.get().unwrap_or(&false);
+    if trust {
+        // Prefer X-Forwarded-For (first IP), then Forwarded
+        if let Some(hdr) = req.headers().get("x-forwarded-for").and_then(|v| v.to_str().ok()) {
+            if let Some(first) = hdr.split(',').next() {
+                let ip = first.trim();
+                if !ip.is_empty() { return ip.to_string(); }
+            }
+        }
+        if let Some(hdr) = req.headers().get("forwarded").and_then(|v| v.to_str().ok()) {
+            for part in hdr.split(';') {
+                if let Some(val) = part.trim().strip_prefix("for=") {
+                    let val = val.trim_matches('"');
+                    let ip = val.trim_matches('[').trim_matches(']').split(':').next().unwrap_or("");
+                    if !ip.is_empty() { return ip.to_string(); }
+                }
+            }
+        }
+    }
+    req.connection_info().realip_remote_addr().unwrap_or("unknown").to_string()
+}
+
+pub async fn upload_document_guarded(req: actix_web::HttpRequest, payload: Multipart) -> Result<HttpResponse, Error> {
+    let qps = *UPLOAD_QPS.get().unwrap_or(&1.0);
+    let burst = *UPLOAD_BURST.get().unwrap_or(&5.0);
+    if !allow_request_for_ip(&get_remote_ip(&req), qps, burst) {
+        crate::monitoring::RATE_LIMIT_DROPS_TOTAL.inc();
+        crate::monitoring::RATE_LIMIT_DROPS_BY_ROUTE.with_label_values(&["/upload"]).inc();
+        return Ok(HttpResponse::TooManyRequests()
+            .append_header(("Retry-After", format!("{}", (1.0_f64 / qps).ceil() as i64)))
+            .json(json!({
+                "status": "error",
+                "message": "Rate limit exceeded",
+            })));
+    }
+    upload_document_inner(payload).await
+}
+
+async fn upload_document_inner(mut payload: Multipart) -> Result<HttpResponse, Error> {
     let request_id = generate_request_id();
     fs::create_dir_all(UPLOAD_DIR).ok();
     let mut uploaded_files = Vec::new();
@@ -456,7 +551,23 @@ pub async fn index_info_handler() -> Result<HttpResponse, Error> {
     }
 }
 
-pub async fn search_documents(query: web::Query<SearchQuery>) -> Result<HttpResponse, Error> {
+pub async fn search_documents_guarded(req: actix_web::HttpRequest, query: web::Query<SearchQuery>) -> Result<HttpResponse, Error> {
+    let qps = *SEARCH_QPS.get().unwrap_or(&1.0);
+    let burst = *SEARCH_BURST.get().unwrap_or(&5.0);
+    if !allow_request_for_ip(&get_remote_ip(&req), qps, burst) {
+        crate::monitoring::RATE_LIMIT_DROPS_TOTAL.inc();
+        crate::monitoring::RATE_LIMIT_DROPS_BY_ROUTE.with_label_values(&["/search"]).inc();
+        return Ok(HttpResponse::TooManyRequests()
+            .append_header(("Retry-After", format!("{}", (1.0_f64 / qps).ceil() as i64)))
+            .json(json!({
+                "status": "error",
+                "message": "Rate limit exceeded",
+            })));
+    }
+    search_documents_inner(query).await
+}
+
+async fn search_documents_inner(query: web::Query<SearchQuery>) -> Result<HttpResponse, Error> {
     let request_id = generate_request_id();
     if let Some(retriever) = RETRIEVER.get() {
         let mut retriever = retriever.lock().unwrap();
@@ -473,6 +584,19 @@ pub async fn search_documents(query: web::Query<SearchQuery>) -> Result<HttpResp
             "request_id": request_id
         })))
     }
+}
+
+pub async fn rerank_guarded(req: actix_web::HttpRequest, request: web::Json<RerankRequest>) -> Result<HttpResponse, Error> {
+    let qps = *SEARCH_QPS.get().unwrap_or(&1.0);
+    let burst = *SEARCH_BURST.get().unwrap_or(&5.0);
+    if !allow_request_for_ip(&get_remote_ip(&req), qps, burst) {
+        crate::monitoring::RATE_LIMIT_DROPS_TOTAL.inc();
+        crate::monitoring::RATE_LIMIT_DROPS_BY_ROUTE.with_label_values(&["/rerank"]).inc();
+        return Ok(HttpResponse::TooManyRequests()
+            .append_header(("Retry-After", format!("{}", (1.0_f64 / qps).ceil() as i64)))
+            .json(json!({ "status": "error", "message": "Rate limit exceeded" })));
+    }
+    rerank(request).await
 }
 
 pub async fn rerank(request: web::Json<RerankRequest>) -> Result<HttpResponse, Error> {
@@ -494,6 +618,19 @@ pub async fn rerank(request: web::Json<RerankRequest>) -> Result<HttpResponse, E
     }
 }
 
+pub async fn summarize_guarded(req: actix_web::HttpRequest, request: web::Json<SummarizeRequest>) -> Result<HttpResponse, Error> {
+    let qps = *SEARCH_QPS.get().unwrap_or(&1.0);
+    let burst = *SEARCH_BURST.get().unwrap_or(&5.0);
+    if !allow_request_for_ip(&get_remote_ip(&req), qps, burst) {
+        crate::monitoring::RATE_LIMIT_DROPS_TOTAL.inc();
+        crate::monitoring::RATE_LIMIT_DROPS_BY_ROUTE.with_label_values(&["/summarize"]).inc();
+        return Ok(HttpResponse::TooManyRequests()
+            .append_header(("Retry-After", format!("{}", (1.0_f64 / qps).ceil() as i64)))
+            .json(json!({ "status": "error", "message": "Rate limit exceeded" })));
+    }
+    summarize(request).await
+}
+
 pub async fn summarize(request: web::Json<SummarizeRequest>) -> Result<HttpResponse, Error> {
     let request_id = generate_request_id();
     if let Some(retriever) = RETRIEVER.get() {
@@ -511,6 +648,20 @@ pub async fn summarize(request: web::Json<SummarizeRequest>) -> Result<HttpRespo
             "request_id": request_id
         })))
     }
+}
+
+pub async fn save_vectors_guarded(req: actix_web::HttpRequest) -> Result<HttpResponse, Error> {
+    // treat as write endpoint; reuse upload limits by default
+    let qps = *UPLOAD_QPS.get().unwrap_or(&1.0);
+    let burst = *UPLOAD_BURST.get().unwrap_or(&5.0);
+    if !allow_request_for_ip(&get_remote_ip(&req), qps, burst) {
+        crate::monitoring::RATE_LIMIT_DROPS_TOTAL.inc();
+        crate::monitoring::RATE_LIMIT_DROPS_BY_ROUTE.with_label_values(&["/save_vectors"]).inc();
+        return Ok(HttpResponse::TooManyRequests()
+            .append_header(("Retry-After", format!("{}", (1.0_f64 / qps).ceil() as i64)))
+            .json(json!({ "status": "error", "message": "Rate limit exceeded" })));
+    }
+    save_vectors_handler().await
 }
 
 pub async fn save_vectors_handler() -> Result<HttpResponse, Error> {
@@ -571,6 +722,19 @@ pub struct RecallRagRequest {
     pub limit: usize,
 }
 
+async fn store_rag_memory_guarded(http: actix_web::HttpRequest, req: web::Json<StoreRagRequest>) -> Result<HttpResponse, Error> {
+    let qps = *UPLOAD_QPS.get().unwrap_or(&1.0);
+    let burst = *UPLOAD_BURST.get().unwrap_or(&5.0);
+    if !allow_request_for_ip(&get_remote_ip(&http), qps, burst) {
+        crate::monitoring::RATE_LIMIT_DROPS_TOTAL.inc();
+        crate::monitoring::RATE_LIMIT_DROPS_BY_ROUTE.with_label_values(&["/memory/store_rag"]).inc();
+        return Ok(HttpResponse::TooManyRequests()
+            .append_header(("Retry-After", format!("{}", (1.0_f64 / qps).ceil() as i64)))
+            .json(json!({ "status": "error", "message": "Rate limit exceeded" })));
+    }
+    store_rag_memory(req).await
+}
+
 async fn store_rag_memory(req: web::Json<StoreRagRequest>) -> Result<HttpResponse, Error> {
     let request_id = generate_request_id();
     let mem = AgentMemory::new("agent.db").map_err(|e| actix_web::error::ErrorInternalServerError(e.to_string()))?;
@@ -581,6 +745,19 @@ async fn store_rag_memory(req: web::Json<StoreRagRequest>) -> Result<HttpRespons
         "status": "success",
         "request_id": request_id
     })))
+}
+
+async fn search_rag_memory_guarded(http: actix_web::HttpRequest, req: web::Json<SearchRagRequest>) -> Result<HttpResponse, Error> {
+    let qps = *SEARCH_QPS.get().unwrap_or(&1.0);
+    let burst = *SEARCH_BURST.get().unwrap_or(&5.0);
+    if !allow_request_for_ip(&get_remote_ip(&http), qps, burst) {
+        crate::monitoring::RATE_LIMIT_DROPS_TOTAL.inc();
+        crate::monitoring::RATE_LIMIT_DROPS_BY_ROUTE.with_label_values(&["/memory/search_rag"]).inc();
+        return Ok(HttpResponse::TooManyRequests()
+            .append_header(("Retry-After", format!("{}", (1.0_f64 / qps).ceil() as i64)))
+            .json(json!({ "status": "error", "message": "Rate limit exceeded" })));
+    }
+    search_rag_memory(req).await
 }
 
 async fn search_rag_memory(req: web::Json<SearchRagRequest>) -> Result<HttpResponse, Error> {
@@ -594,6 +771,19 @@ async fn search_rag_memory(req: web::Json<SearchRagRequest>) -> Result<HttpRespo
     })))
 }
 
+async fn recall_rag_memory_guarded(http: actix_web::HttpRequest, req: web::Json<RecallRagRequest>) -> Result<HttpResponse, Error> {
+    let qps = *SEARCH_QPS.get().unwrap_or(&1.0);
+    let burst = *SEARCH_BURST.get().unwrap_or(&5.0);
+    if !allow_request_for_ip(&get_remote_ip(&http), qps, burst) {
+        crate::monitoring::RATE_LIMIT_DROPS_TOTAL.inc();
+        crate::monitoring::RATE_LIMIT_DROPS_BY_ROUTE.with_label_values(&["/memory/recall_rag"]).inc();
+        return Ok(HttpResponse::TooManyRequests()
+            .append_header(("Retry-After", format!("{}", (1.0_f64 / qps).ceil() as i64)))
+            .json(json!({ "status": "error", "message": "Rate limit exceeded" })));
+    }
+    recall_rag_memory(req).await
+}
+
 async fn recall_rag_memory(req: web::Json<RecallRagRequest>) -> Result<HttpResponse, Error> {
     let request_id = generate_request_id();
     let mem = AgentMemory::new("agent.db").map_err(|e| actix_web::error::ErrorInternalServerError(e.to_string()))?;
@@ -603,6 +793,19 @@ async fn recall_rag_memory(req: web::Json<RecallRagRequest>) -> Result<HttpRespo
         "items": items,
         "request_id": request_id
     })))
+}
+
+async fn run_agent_guarded(http: actix_web::HttpRequest, req: web::Json<AgentRequest>) -> Result<HttpResponse, Error> {
+    let qps = *SEARCH_QPS.get().unwrap_or(&1.0);
+    let burst = *SEARCH_BURST.get().unwrap_or(&5.0);
+    if !allow_request_for_ip(&get_remote_ip(&http), qps, burst) {
+        crate::monitoring::RATE_LIMIT_DROPS_TOTAL.inc();
+        crate::monitoring::RATE_LIMIT_DROPS_BY_ROUTE.with_label_values(&["/agent"]).inc();
+        return Ok(HttpResponse::TooManyRequests()
+            .append_header(("Retry-After", format!("{}", (1.0_f64 / qps).ceil() as i64)))
+            .json(json!({ "status": "error", "message": "Rate limit exceeded" })));
+    }
+    run_agent(req).await
 }
 
 async fn run_agent(req: web::Json<AgentRequest>) -> Result<HttpResponse, Error> {
@@ -624,8 +827,9 @@ async fn run_agent(req: web::Json<AgentRequest>) -> Result<HttpResponse, Error> 
 }
 
 pub fn start_api_server(config: &ApiConfig) -> impl std::future::Future<Output = std::io::Result<()>> {
-    HttpServer::new(|| {
-        let cors = Cors::default()
+    // Initialize rate limit globals from config (Once)
+    init_rate_limit_from_config(config);
+    HttpServer::new(|| {        let cors = Cors::default()
             .allowed_origin("http://127.0.0.1:3011")
             .allowed_origin("http://localhost:3011")
             .allowed_methods(vec!["GET", "POST", "DELETE"])
@@ -637,27 +841,28 @@ pub fn start_api_server(config: &ApiConfig) -> impl std::future::Future<Output =
         
         App::new()
             .wrap(cors)
+            .wrap(crate::trace_middleware::TraceMiddleware::new())
             .route("/", web::get().to(root_handler))
             .route("/health", web::get().to(health_check))
             .route("/ready", web::get().to(ready_check))
             .route("/metrics", web::get().to(get_metrics))
-            .route("/upload", web::post().to(upload_document))
+            .route("/upload", web::post().to(upload_document_guarded))
             .route("/documents", web::get().to(list_documents))
             .route("/documents/{filename}", web::delete().to(delete_document))
             .route("/reindex", web::post().to(reindex_handler))
             .route("/reindex/async", web::post().to(reindex_async_handler))
             .route("/reindex/status/{job_id}", web::get().to(reindex_status_handler))
             .route("/index/info", web::get().to(index_info_handler))
-            .route("/search", web::get().to(search_documents))
-            .route("/rerank", web::post().to(rerank))
-            .route("/summarize", web::post().to(summarize))
-            .route("/save_vectors", web::post().to(save_vectors_handler))
+            .route("/search", web::get().to(search_documents_guarded))
+            .route("/rerank", web::post().to(rerank_guarded))
+            .route("/summarize", web::post().to(summarize_guarded))
+            .route("/save_vectors", web::post().to(save_vectors_guarded))
             // RAG memory endpoints
-            .route("/memory/store_rag", web::post().to(store_rag_memory))
-            .route("/memory/search_rag", web::post().to(search_rag_memory))
-            .route("/memory/recall_rag", web::post().to(recall_rag_memory))
+            .route("/memory/store_rag", web::post().to(store_rag_memory_guarded))
+            .route("/memory/search_rag", web::post().to(search_rag_memory_guarded))
+            .route("/memory/recall_rag", web::post().to(recall_rag_memory_guarded))
             // Agentic endpoint
-            .route("/agent", web::post().to(run_agent))
+            .route("/agent", web::post().to(run_agent_guarded))
     })
     .bind(config.bind_addr())
     .unwrap_or_else(|e| panic!("Failed to bind to {}: {}", config.bind_addr(), e))

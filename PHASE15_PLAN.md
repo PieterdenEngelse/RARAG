@@ -1,5 +1,7 @@
 # Phase 15 Plan – Reliability, Observability, and Operability
 
+# PHASE15_PLAN.md
+
 This phase builds on Phase 14 (Tracing/Logging/Metrics) and focuses on observability hardening, reliability under load, and configurable ops features. Items marked Optional are disabled by default and can be enabled via environment or feature flags.
 
 ## 1) Observability Hardening
@@ -309,6 +311,377 @@ Progress Update (Step 4 – Configurability – Logging and Metrics):
 - Added src/monitoring/metrics_config.rs providing ConfigurableMetricsRegistry to create histograms with configured buckets, plus tests (including duplicate registration handling).
 - Updated examples and documentation in this plan to match behavior.
 - Status: Step 4 COMPLETE ✅
+
+# Phase 15 – Step 4: Security and Hardening – Rate Limiting, Tracing, Monitoring, and CI Enhancements
+
+This document summarizes the implementation work completed for Phase 15 (and related monitoring/tracing enhancements). The focus was on securing and hardening the API via per-IP rate limiting, extending protection to key endpoints, enriching observability (metrics and tracing), adding CI-safe integration tests, and providing Prometheus/Grafana alerting and dashboards.
+
+---
+
+## Key Outcomes
+
+- Per-IP token bucket rate limiting with LRU map, env-driven configuration, and Retry-After headers
+- Route-specific rate limits (read vs write)
+- Proxy-aware client IP detection via TRUST_PROXY (X-Forwarded-For/Forwarded)
+- Protection extended to additional endpoints (`/search`, `/upload`, `/rerank`, `/summarize`, `/save_vectors`, `/memory/*`, `/agent`)
+- Observability:
+  - Prometheus request latency histograms with route/method/status labels
+  - Labeled rate-limit drop counters (total and by route)
+  - Route label normalization to prevent metric cardinality explosions
+- Tracing improvements:
+  - Per-request spans via middleware
+  - Request attributes in spans (method, route, request_id, client IP, user agent)
+  - Structured events for rate-limited requests
+  - OpenTelemetry Jaeger integration updated (agent default; collector opt-in)
+- CI-friendly tests for stability
+- Alerting and dashboard assets for Prometheus/Grafana
+
+---
+
+## 1) Rate Limiting
+
+### 1.1 Token bucket per IP with LRU and Retry-After
+- Token bucket per-client IP with refills at `RATE_LIMIT_QPS` up to `RATE_LIMIT_BURST`.
+- If no token is available, respond with HTTP 429 and `Retry-After: ceil(1/QPS)`.
+- LRU for per-IP buckets with `RATE_LIMIT_LRU_CAPACITY` (default 1024).
+
+### 1.2 Env configuration
+- `RATE_LIMIT_ENABLED=true|false`
+- Global fallback: `RATE_LIMIT_QPS` (float), `RATE_LIMIT_BURST` (int)
+- Per-route overrides:
+  - `RATE_LIMIT_SEARCH_QPS/BURST` (read-like endpoints)
+  - `RATE_LIMIT_UPLOAD_QPS/BURST` (write-like endpoints)
+- `RATE_LIMIT_LRU_CAPACITY` to control per-IP bucket cache size
+- `TRUST_PROXY=true|false` to honor `X-Forwarded-For/Forwarded` only when true
+
+### 1.3 Endpoints protected (examples)
+- Read-like: `GET /search`, `POST /rerank`, `POST /summarize`, `POST /memory/search_rag`, `POST /memory/recall_rag`, `POST /agent`
+- Write-like: `POST /upload`, `POST /save_vectors`, `POST /memory/store_rag`
+
+### 1.4 Proxy-aware IP detection
+- TRUST_PROXY=true:
+  - Prefer `X-Forwarded-For` (first IP) → `Forwarded` (for=...) → remote addr
+- TRUST_PROXY=false:
+  - Always use real remote addr (ignore forwarded headers)
+
+---
+
+## 2) Observability – Metrics and Dashboards
+
+### 2.1 Prometheus metrics
+- Latency histogram:
+  - `request_latency_ms_bucket{method, route, status_class, le}`
+  - `request_latency_ms_sum`, `request_latency_ms_count`
+- Rate-limit drops:
+  - `rate_limit_drops_total`
+  - `rate_limit_drops_by_route_total{route}`
+
+### 2.2 Route label normalization
+- Uses Actix’s matched pattern when available (low-cardinality).
+- Adds small normalization map for known variable segments (e.g., `/documents/{filename}` → `/documents/:filename`, `/reindex/status/{job_id}` → `/reindex/status/:job_id`).
+
+### 2.3 Grafana dashboard (ready-to-import)
+- Dashboard: **AG – Latency & Rate-Limit**
+  - Latency p95/p99 by route (5m)
+  - Latency p95 by route (time series)
+  - Request volume by route (5m rate)
+  - Rate-limit drops total and by route (5m increase)
+
+### 2.4 Prometheus alert rules (ready-to-use)
+- Alerts for:
+  - Spike and sustained high `rate_limit_drops_total`
+  - High p95/p99 route latency via `histogram_quantile`
+- See `alerts-ag.yaml` for ready-to-copy rules.
+
+---
+
+## 3) Tracing – OpenTelemetry/Jaeger
+
+### 3.1 Middleware spans and attributes
+- TraceMiddleware wraps requests:
+  - Span `http_request` with attributes: method, path (normalized route), client_ip, request_id, user_agent
+  - Records duration/status and observes latency into Prometheus histogram
+
+### 3.2 Rate-limited structured events
+- `warn!` emitted when 429 is returned, including `rate_limited=true` and route.
+- Helps identify throttling in logs and traces.
+
+### 3.3 Jaeger integration
+- Updated to current OpenTelemetry APIs:
+  - **Agent** pipeline (default; no env needed)
+  - **Collector** mode (opt-in via env):
+    - `TRACING_ENABLED=true`
+    - `JAEGER_MODE=collector`
+    - `JAEGER_COLLECTOR_ENDPOINT=http://localhost:14268/api/traces`
+- If Jaeger isn’t running, the app still runs; spans won’t export, but metrics/logs remain available.
+
+---
+
+## 4) CI-Friendly Tests and Stability
+
+### 4.1 Tests added/stabilized
+- Read/write rate-limit integration (with reqwest 0.12 multipart async fix)
+- LRU eviction under small capacity
+- Trust proxy toggle:
+  - TRUST_PROXY=false: XFF ignored, buckets shared
+  - TRUST_PROXY=true: distinct IPs get independent bursts
+- Token refill:
+  - Exhaust burst, sleep ~ceil(1/QPS)+buffer, assert next request is 200
+
+### 4.2 Notes on reqwest 0.12
+- `reqwest::multipart::Part::file(path)` is async and must be awaited before `file_name()` or adding to a `Form`.
+
+### 4.3 Test characteristics
+- Deterministic, isolated ports, minimal sleeps (only for refill behavior), no external dependencies required.
+
+---
+
+## 5) Runtime Verification
+
+### 5.1 Without Jaeger
+- Start backend with rate limiting enabled and exercise `/search`:
+  - Expect first ~BURST = 200, then 429 with `Retry-After`.
+- Inspect `/metrics`:
+  - `request_latency_ms` with method/route/status_class labels
+  - `rate_limit_drops_by_route_total` increases after burst
+  - `rate_limit_drops_total` increases overall
+
+### 5.2 With Jaeger (collector)
+- Enable via env and start Jaeger collector:
+  - Spans visible in Jaeger UI; metrics/logs still available.
+
+---
+
+## 6) Tuning and Recommendations
+
+- Start conservatively:
+  - Reads (search-like): `RATE_LIMIT_SEARCH_QPS=1–2`, `RATE_LIMIT_SEARCH_BURST=3–6`
+  - Writes (upload-like): similar QPS, slightly higher burst if needed
+- Alerts thresholds:
+  - Adjust spike/sustained drop thresholds and p95/p99 latency thresholds to match SLOs.
+- Dashboards:
+  - Validate route label cardinality; add mappings for any new dynamic segments.
+- Tracing:
+  - Consider adding more span attributes for context (e.g., request size, response size) if useful.
+
+---
+
+## 7) Files & Changes (High-Level)
+
+- **src/api/mod.rs**:
+  - Rate-limit guards for multiple endpoints
+  - `warn!` events on 429 with `rate_limited=true`
+- **src/monitoring/trace_middleware.rs**:
+  - Span creation with attributes and latency observation
+- **src/monitoring/metrics.rs**:
+  - `REQUEST_LATENCY_MS` histogram vec
+  - Existing `rate_limit_drops_*` counters used
+- **src/monitoring/distributed_tracing.rs**:
+  - OpenTelemetry Jaeger integration updated; agent default, collector opt-in
+- **tests/**:
+  - Integration tests (read/write, refill, trust proxy toggle, LRU eviction)
+  - `reqwest` multipart async fix applied for 0.12
+- **Observability assets**:
+  - `alerts-ag.yaml` (Prometheus Alertmanager rules)
+  - `ag-latency-rate.json` (Grafana dashboard)
+  - Optional provisioning YAML for Grafana
+
+---
+
+## Closing
+
+You now have a hardened API with tunable, per-route rate limiting and strong observability:
+- Clear metrics and dashboards for latency and drops
+- Tracing spans with useful attributes and rate-limit events
+- CI-friendly tests for stability
+
+If you want next steps (e.g., CI workflow, additional route normalizations, span enrichment, or dashboard variants), specify them and they can be added quickly.
+
+# Phase 15 – Step 4: Security and Hardening – Rate Limiting, Tracing, Monitoring, and CI Enhancements
+
+This document summarizes the implementation work completed for Phase 15 (and related monitoring/tracing enhancements). The focus was on securing and hardening the API via per-IP rate limiting, extending protection to key endpoints, enriching observability (metrics and tracing), adding CI-safe integration tests, and providing Prometheus/Grafana alerting and dashboards.
+
+---
+
+## Key Outcomes
+
+- Per-IP token bucket rate limiting with LRU map, env-driven configuration, and Retry-After headers
+- Route-specific rate limits (read vs write)
+- Proxy-aware client IP detection via TRUST_PROXY (X-Forwarded-For/Forwarded)
+- Protection extended to additional endpoints (`/search`, `/upload`, `/rerank`, `/summarize`, `/save_vectors`, `/memory/*`, `/agent`)
+- Observability:
+  - Prometheus request latency histograms with route/method/status labels
+  - Labeled rate-limit drop counters (total and by route)
+  - Route label normalization to prevent metric cardinality explosions
+- Tracing improvements:
+  - Per-request spans via middleware
+  - Request attributes in spans (method, route, request_id, client IP, user agent)
+  - Structured events for rate-limited requests
+  - OpenTelemetry Jaeger integration updated (agent default; collector opt-in)
+- CI-friendly tests for stability
+- Alerting and dashboard assets for Prometheus/Grafana
+
+---
+
+## 1) Rate Limiting
+
+### 1.1 Token bucket per IP with LRU and Retry-After
+- Token bucket per-client IP with refills at `RATE_LIMIT_QPS` up to `RATE_LIMIT_BURST`.
+- If no token is available, respond with HTTP 429 and `Retry-After: ceil(1/QPS)`.
+- LRU for per-IP buckets with `RATE_LIMIT_LRU_CAPACITY` (default 1024).
+
+### 1.2 Env configuration
+- `RATE_LIMIT_ENABLED=true|false`
+- Global fallback: `RATE_LIMIT_QPS` (float), `RATE_LIMIT_BURST` (int)
+- Per-route overrides:
+  - `RATE_LIMIT_SEARCH_QPS/BURST` (read-like endpoints)
+  - `RATE_LIMIT_UPLOAD_QPS/BURST` (write-like endpoints)
+- `RATE_LIMIT_LRU_CAPACITY` to control per-IP bucket cache size
+- `TRUST_PROXY=true|false` to honor `X-Forwarded-For/Forwarded` only when true
+
+### 1.3 Endpoints protected (examples)
+- Read-like: `GET /search`, `POST /rerank`, `POST /summarize`, `POST /memory/search_rag`, `POST /memory/recall_rag`, `POST /agent`
+- Write-like: `POST /upload`, `POST /save_vectors`, `POST /memory/store_rag`
+
+### 1.4 Proxy-aware IP detection
+- TRUST_PROXY=true:
+  - Prefer `X-Forwarded-For` (first IP) → `Forwarded` (for=...) → remote addr
+- TRUST_PROXY=false:
+  - Always use real remote addr (ignore forwarded headers)
+
+---
+
+## 2) Observability – Metrics and Dashboards
+
+### 2.1 Prometheus metrics
+- Latency histogram:
+  - `request_latency_ms_bucket{method, route, status_class, le}`
+  - `request_latency_ms_sum`, `request_latency_ms_count`
+- Rate-limit drops:
+  - `rate_limit_drops_total`
+  - `rate_limit_drops_by_route_total{route}`
+
+### 2.2 Route label normalization
+- Uses Actix’s matched pattern when available (low-cardinality).
+- Adds small normalization map for known variable segments (e.g., `/documents/{filename}` → `/documents/:filename`, `/reindex/status/{job_id}` → `/reindex/status/:job_id`).
+
+### 2.3 Grafana dashboard (ready-to-import)
+- Dashboard: **AG – Latency & Rate-Limit**
+  - Latency p95/p99 by route (5m)
+  - Latency p95 by route (time series)
+  - Request volume by route (5m rate)
+  - Rate-limit drops total and by route (5m increase)
+
+### 2.4 Prometheus alert rules (ready-to-use)
+- Alerts for:
+  - Spike and sustained high `rate_limit_drops_total`
+  - High p95/p99 route latency via `histogram_quantile`
+- See `alerts-ag.yaml` for ready-to-copy rules.
+
+---
+
+## 3) Tracing – OpenTelemetry/Jaeger
+
+### 3.1 Middleware spans and attributes
+- TraceMiddleware wraps requests:
+  - Span `http_request` with attributes: method, path (normalized route), client_ip, request_id, user_agent
+  - Records duration/status and observes latency into Prometheus histogram
+
+### 3.2 Rate-limited structured events
+- `warn!` emitted when 429 is returned, including `rate_limited=true` and route.
+- Helps identify throttling in logs and traces.
+
+### 3.3 Jaeger integration
+- Updated to current OpenTelemetry APIs:
+  - **Agent** pipeline (default; no env needed)
+  - **Collector** mode (opt-in via env):
+    - `TRACING_ENABLED=true`
+    - `JAEGER_MODE=collector`
+    - `JAEGER_COLLECTOR_ENDPOINT=http://localhost:14268/api/traces`
+- If Jaeger isn’t running, the app still runs; spans won’t export, but metrics/logs remain available.
+
+---
+
+## 4) CI-Friendly Tests and Stability
+
+### 4.1 Tests added/stabilized
+- Read/write rate-limit integration (with reqwest 0.12 multipart async fix)
+- LRU eviction under small capacity
+- Trust proxy toggle:
+  - TRUST_PROXY=false: XFF ignored, buckets shared
+  - TRUST_PROXY=true: distinct IPs get independent bursts
+- Token refill:
+  - Exhaust burst, sleep ~ceil(1/QPS)+buffer, assert next request is 200
+
+### 4.2 Notes on reqwest 0.12
+- `reqwest::multipart::Part::file(path)` is async and must be awaited before `file_name()` or adding to a `Form`.
+
+### 4.3 Test characteristics
+- Deterministic, isolated ports, minimal sleeps (only for refill behavior), no external dependencies required.
+
+---
+
+## 5) Runtime Verification
+
+### 5.1 Without Jaeger
+- Start backend with rate limiting enabled and exercise `/search`:
+  - Expect first ~BURST = 200, then 429 with `Retry-After`.
+- Inspect `/metrics`:
+  - `request_latency_ms` with method/route/status_class labels
+  - `rate_limit_drops_by_route_total` increases after burst
+  - `rate_limit_drops_total` increases overall
+
+### 5.2 With Jaeger (collector)
+- Enable via env and start Jaeger collector:
+  - Spans visible in Jaeger UI; metrics/logs still available.
+
+---
+
+## 6) Tuning and Recommendations
+
+- Start conservatively:
+  - Reads (search-like): `RATE_LIMIT_SEARCH_QPS=1–2`, `RATE_LIMIT_SEARCH_BURST=3–6`
+  - Writes (upload-like): similar QPS, slightly higher burst if needed
+- Alerts thresholds:
+  - Adjust spike/sustained drop thresholds and p95/p99 latency thresholds to match SLOs.
+- Dashboards:
+  - Validate route label cardinality; add mappings for any new dynamic segments.
+- Tracing:
+  - Consider adding more span attributes for context (e.g., request size, response size) if useful.
+
+---
+
+## 7) Files & Changes (High-Level)
+
+- **src/api/mod.rs**:
+  - Rate-limit guards for multiple endpoints
+  - `warn!` events on 429 with `rate_limited=true`
+- **src/monitoring/trace_middleware.rs**:
+  - Span creation with attributes and latency observation
+- **src/monitoring/metrics.rs**:
+  - `REQUEST_LATENCY_MS` histogram vec
+  - Existing `rate_limit_drops_*` counters used
+- **src/monitoring/distributed_tracing.rs**:
+  - OpenTelemetry Jaeger integration updated; agent default, collector opt-in
+- **tests/**:
+  - Integration tests (read/write, refill, trust proxy toggle, LRU eviction)
+  - `reqwest` multipart async fix applied for 0.12
+- **Observability assets**:
+  - `alerts-ag.yaml` (Prometheus Alertmanager rules)
+  - `ag-latency-rate.json` (Grafana dashboard)
+  - Optional provisioning YAML for Grafana
+
+---
+
+## Closing
+
+You now have a hardened API with tunable, per-route rate limiting and strong observability:
+- Clear metrics and dashboards for latency and drops
+- Tracing spans with useful attributes and rate-limit events
+- CI-friendly tests for stability
+
+If you want next steps (e.g., CI workflow, additional route normalizations, span enrichment, or dashboard variants), specify them and they can be added quickly.
+
 
 ## 5) Alerting Hooks (Optional)
 
