@@ -12,6 +12,14 @@ pub struct ApiConfig {
     pub index_in_ram: bool,
     pub reindex_webhook_url: Option<String>,
     pub rate_limit_enabled: bool,
+    pub rate_limit_qps: f64,
+    pub rate_limit_burst: u32,
+    pub trust_proxy: bool,
+    pub rate_limit_search_qps: Option<f64>,
+    pub rate_limit_search_burst: Option<u32>,
+    pub rate_limit_upload_qps: Option<f64>,
+    pub rate_limit_upload_burst: Option<u32>,
+    pub rate_limit_lru_capacity: usize,
     
     // Path Management
     pub path_manager: PathManager,
@@ -49,6 +57,23 @@ impl ApiConfig {
         let rate_limit_enabled = env::var("RATE_LIMIT_ENABLED")
             .map(|v| v.to_lowercase() == "true" || v == "1")
             .unwrap_or(false);
+        let rate_limit_qps = env::var("RATE_LIMIT_QPS")
+            .unwrap_or_else(|_| "1.0".to_string())
+            .parse()
+            .unwrap_or(1.0);
+        let rate_limit_burst = env::var("RATE_LIMIT_BURST")
+            .unwrap_or_else(|_| "5".to_string())
+            .parse()
+            .unwrap_or(5);
+        let trust_proxy = env::var("TRUST_PROXY")
+            .map(|v| v.to_lowercase() == "true" || v == "1")
+            .unwrap_or(false);
+        let rate_limit_search_qps = env::var("RATE_LIMIT_SEARCH_QPS").ok().and_then(|v| v.parse().ok());
+        let rate_limit_search_burst = env::var("RATE_LIMIT_SEARCH_BURST").ok().and_then(|v| v.parse().ok());
+        let rate_limit_upload_qps = env::var("RATE_LIMIT_UPLOAD_QPS").ok().and_then(|v| v.parse().ok());
+        let rate_limit_upload_burst = env::var("RATE_LIMIT_UPLOAD_BURST").ok().and_then(|v| v.parse().ok());
+        let rate_limit_lru_capacity = env::var("RATE_LIMIT_LRU_CAPACITY")
+            .unwrap_or_else(|_| "1024".to_string()).parse().unwrap_or(1024);
         
         // Path Management
         let path_manager = PathManager::new()
@@ -73,6 +98,14 @@ impl ApiConfig {
             index_in_ram,
             reindex_webhook_url,
             rate_limit_enabled,
+            rate_limit_qps,
+            rate_limit_burst,
+            trust_proxy,
+            rate_limit_search_qps,
+            rate_limit_search_burst,
+            rate_limit_upload_qps,
+            rate_limit_upload_burst,
+            rate_limit_lru_capacity,
             path_manager,
             redis_enabled,
             redis_url,

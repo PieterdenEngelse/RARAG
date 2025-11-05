@@ -24,7 +24,6 @@ futures-util = "0.3.31"
 # Serialization
 serde_json = "1.0.145"
 serde = { version = "1.0.228", features = ["derive"] }
-serde_yaml = { version = "0.9", optional = true }
 
 # File System & Utilities
 notify = "6"
@@ -95,8 +94,7 @@ installer = [
     "sha2"
 ]
 # Full feature set: all capabilities
-full = ["installer", "rl_yaml"]
-rl_yaml = ["serde_yaml"]
+full = ["installer"]
 
 [profile.release]
 opt-level = 3

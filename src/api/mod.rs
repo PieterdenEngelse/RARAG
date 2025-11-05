@@ -8,7 +8,7 @@ use std::path::Path;
 use std::sync::{Arc, Mutex, OnceLock};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::collections::HashMap;
-use tracing::error;
+use tracing::{error, info};
 use serde_json::json;
 use crate::retriever::Retriever;
 use crate::index;
@@ -54,6 +54,9 @@ static RETRIEVER: OnceLock<Arc<Mutex<Retriever>>> = OnceLock::new();
 pub fn set_retriever_handle(handle: Arc<Mutex<Retriever>>) {
     let _ = RETRIEVER.set(handle);
 }
+
+// Rate limiting is enforced by middleware (see monitoring/rate_limit_middleware.rs).
+// The per-handler token-bucket implementation was removed to avoid double-limiting.
 
 #[derive(serde::Deserialize)]
 pub struct SearchQuery { 
@@ -186,7 +189,8 @@ async fn get_metrics() -> Result<HttpResponse, Error> {
     }
 }
 
-pub async fn upload_document(mut payload: Multipart) -> Result<HttpResponse, Error> {
+
+async fn upload_document_inner(mut payload: Multipart) -> Result<HttpResponse, Error> {
     let request_id = generate_request_id();
     fs::create_dir_all(UPLOAD_DIR).ok();
     let mut uploaded_files = Vec::new();
@@ -263,7 +267,8 @@ pub async fn delete_document(path: web::Path<String>) -> Result<HttpResponse, Er
 
 pub async fn reindex_handler() -> Result<HttpResponse, Error> {
     let request_id = generate_request_id();
-    
+    let start = std::time::Instant::now();
+
     // Phase 15: Check concurrency
     if REINDEX_IN_PROGRESS.compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst).is_err() {
         return Ok(HttpResponse::TooManyRequests().json(json!({
@@ -273,17 +278,46 @@ pub async fn reindex_handler() -> Result<HttpResponse, Error> {
         })));
     }
 
+    // Alerting config
+    let hooks = crate::monitoring::alerting_hooks::AlertingHooksConfig::from_env();
+
     if let Some(retriever) = RETRIEVER.get() {
         let mut retriever = retriever.lock().unwrap();
-        let _ = index::index_all_documents(&mut *retriever, UPLOAD_DIR);
+        let res = index::index_all_documents(&mut *retriever, UPLOAD_DIR);
+        let duration_ms = start.elapsed().as_millis() as u64;
+        let vectors = retriever.metrics.total_vectors as u64;
+        let mappings = retriever.metrics.total_documents_indexed as u64;
         REINDEX_IN_PROGRESS.store(false, Ordering::SeqCst);
-        Ok(HttpResponse::Ok().json(json!({
-            "status": "success",
-            "message": "Reindexing complete",
-            "request_id": request_id
-        })))
+
+        // Fire webhook (non-blocking)
+        let event = match res {
+            Ok(_) => crate::monitoring::alerting_hooks::ReindexCompletionEvent::success(duration_ms, vectors, mappings),
+            Err(_) => crate::monitoring::alerting_hooks::ReindexCompletionEvent::error(duration_ms, vectors, mappings),
+        };
+        actix_web::rt::spawn(async move {
+            crate::monitoring::alerting_hooks::send_alert(&hooks, event).await;
+        });
+
+        match res {
+            Ok(_) => Ok(HttpResponse::Ok().json(json!({
+                "status": "success",
+                "message": "Reindexing complete",
+                "request_id": request_id
+            }))),
+            Err(e) => Ok(HttpResponse::InternalServerError().json(json!({
+                "status": "error",
+                "message": format!("Reindex failed: {}", e),
+                "request_id": request_id
+            }))),
+        }
     } else {
         REINDEX_IN_PROGRESS.store(false, Ordering::SeqCst);
+        // Fire error webhook for missing retriever
+        let hooks2 = crate::monitoring::alerting_hooks::AlertingHooksConfig::from_env();
+        let event = crate::monitoring::alerting_hooks::ReindexCompletionEvent::error(0, 0, 0);
+        actix_web::rt::spawn(async move {
+            crate::monitoring::alerting_hooks::send_alert(&hooks2, event).await;
+        });
         Ok(HttpResponse::InternalServerError().json(json!({
             "status": "error",
             "message": "Retriever not initialized",
@@ -324,19 +358,38 @@ pub async fn reindex_async_handler() -> Result<HttpResponse, Error> {
     let retriever_handle = RETRIEVER.get().map(|h| Arc::clone(h));
     
     actix_web::rt::spawn(async move {
+        let start = std::time::Instant::now();
+        let hooks = crate::monitoring::alerting_hooks::AlertingHooksConfig::from_env();
         if let Some(retriever) = retriever_handle {
             let mut retriever = retriever.lock().unwrap();
             let mut job = jobs.lock().unwrap().get(&job_id_clone).cloned().unwrap();
             job.status = "running".to_string();
             jobs.lock().unwrap().insert(job_id_clone.clone(), job);
 
-            let _ = index::index_all_documents(&mut *retriever, UPLOAD_DIR);
+            let res = index::index_all_documents(&mut *retriever, UPLOAD_DIR);
 
             let mut job = jobs.lock().unwrap().get(&job_id_clone).cloned().unwrap();
-            job.status = "completed".to_string();
-            job.completed_at = Some(Utc::now().to_rfc3339());
-            job.vectors_indexed = Some(retriever.metrics.total_vectors);
-            job.mappings_indexed = Some(retriever.metrics.total_documents_indexed);
+            let duration_ms = start.elapsed().as_millis() as u64;
+            let vectors = retriever.metrics.total_vectors as u64;
+            let mappings = retriever.metrics.total_documents_indexed as u64;
+
+            match res {
+                Ok(_) => {
+                    job.status = "completed".to_string();
+                    job.completed_at = Some(Utc::now().to_rfc3339());
+                    job.vectors_indexed = Some(vectors as usize);
+                    job.mappings_indexed = Some(mappings as usize);
+                    let event = crate::monitoring::alerting_hooks::ReindexCompletionEvent::success(duration_ms, vectors, mappings);
+                    crate::monitoring::alerting_hooks::send_alert(&hooks, event).await;
+                }
+                Err(e) => {
+                    job.status = "failed".to_string();
+                    job.completed_at = Some(Utc::now().to_rfc3339());
+                    job.error = Some(e.to_string());
+                    let event = crate::monitoring::alerting_hooks::ReindexCompletionEvent::error(duration_ms, vectors, mappings);
+                    crate::monitoring::alerting_hooks::send_alert(&hooks, event).await;
+                }
+            }
             jobs.lock().unwrap().insert(job_id_clone.clone(), job);
         }
         REINDEX_IN_PROGRESS.store(false, Ordering::SeqCst);
@@ -407,7 +460,8 @@ pub async fn index_info_handler() -> Result<HttpResponse, Error> {
     }
 }
 
-pub async fn search_documents(query: web::Query<SearchQuery>) -> Result<HttpResponse, Error> {
+
+async fn search_documents_inner(query: web::Query<SearchQuery>) -> Result<HttpResponse, Error> {
     let request_id = generate_request_id();
     if let Some(retriever) = RETRIEVER.get() {
         let mut retriever = retriever.lock().unwrap();
@@ -425,6 +479,7 @@ pub async fn search_documents(query: web::Query<SearchQuery>) -> Result<HttpResp
         })))
     }
 }
+
 
 pub async fn rerank(request: web::Json<RerankRequest>) -> Result<HttpResponse, Error> {
     let request_id = generate_request_id();
@@ -445,6 +500,7 @@ pub async fn rerank(request: web::Json<RerankRequest>) -> Result<HttpResponse, E
     }
 }
 
+
 pub async fn summarize(request: web::Json<SummarizeRequest>) -> Result<HttpResponse, Error> {
     let request_id = generate_request_id();
     if let Some(retriever) = RETRIEVER.get() {
@@ -463,6 +519,7 @@ pub async fn summarize(request: web::Json<SummarizeRequest>) -> Result<HttpRespo
         })))
     }
 }
+
 
 pub async fn save_vectors_handler() -> Result<HttpResponse, Error> {
     let request_id = generate_request_id();
@@ -522,6 +579,7 @@ pub struct RecallRagRequest {
     pub limit: usize,
 }
 
+
 async fn store_rag_memory(req: web::Json<StoreRagRequest>) -> Result<HttpResponse, Error> {
     let request_id = generate_request_id();
     let mem = AgentMemory::new("agent.db").map_err(|e| actix_web::error::ErrorInternalServerError(e.to_string()))?;
@@ -534,6 +592,7 @@ async fn store_rag_memory(req: web::Json<StoreRagRequest>) -> Result<HttpRespons
     })))
 }
 
+
 async fn search_rag_memory(req: web::Json<SearchRagRequest>) -> Result<HttpResponse, Error> {
     let request_id = generate_request_id();
     let mem = AgentMemory::new("agent.db").map_err(|e| actix_web::error::ErrorInternalServerError(e.to_string()))?;
@@ -545,6 +604,7 @@ async fn search_rag_memory(req: web::Json<SearchRagRequest>) -> Result<HttpRespo
     })))
 }
 
+
 async fn recall_rag_memory(req: web::Json<RecallRagRequest>) -> Result<HttpResponse, Error> {
     let request_id = generate_request_id();
     let mem = AgentMemory::new("agent.db").map_err(|e| actix_web::error::ErrorInternalServerError(e.to_string()))?;
@@ -555,6 +615,7 @@ async fn recall_rag_memory(req: web::Json<RecallRagRequest>) -> Result<HttpRespo
         "request_id": request_id
     })))
 }
+
 
 async fn run_agent(req: web::Json<AgentRequest>) -> Result<HttpResponse, Error> {
     let request_id = generate_request_id();
@@ -575,7 +636,53 @@ async fn run_agent(req: web::Json<AgentRequest>) -> Result<HttpResponse, Error> 
 }
 
 pub fn start_api_server(config: &ApiConfig) -> impl std::future::Future<Output = std::io::Result<()>> {
-    HttpServer::new(|| {
+    // Snapshot needed config values to satisfy 'static factory closure
+    let bind_addr = config.bind_addr();
+    let trust_proxy = config.trust_proxy;
+    let rate_limit_enabled = config.rate_limit_enabled;
+    let rate_limit_qps = config.rate_limit_qps;
+    let rate_limit_burst = config.rate_limit_burst as f64;
+    let rate_limit_lru_capacity = config.rate_limit_lru_capacity;
+    let search_qps = config.rate_limit_search_qps.unwrap_or(rate_limit_qps);
+    let search_burst = config.rate_limit_search_burst.unwrap_or(config.rate_limit_burst) as f64;
+    let upload_qps = config.rate_limit_upload_qps.unwrap_or(rate_limit_qps);
+    let upload_burst = config.rate_limit_upload_burst.unwrap_or(config.rate_limit_burst) as f64;
+
+    HttpServer::new(move || {
+        // Shared RateLimiter across workers (middleware-only enforcement)
+        let rl_cfg = crate::security::rate_limiter::RateLimiterConfig {
+            enabled: rate_limit_enabled,
+            qps: rate_limit_qps.max(0.0),
+            burst: rate_limit_burst,
+            max_ips: rate_limit_lru_capacity,
+        };
+        let rl = std::sync::Arc::new(crate::security::rate_limiter::RateLimiter::new(rl_cfg));
+        let opts = crate::monitoring::rate_limit_middleware::RateLimitOptions {
+            trust_proxy,
+            search_qps: search_qps.max(0.0),
+            search_burst,
+            upload_qps: upload_qps.max(0.0),
+            upload_burst,
+            rules: vec![
+                // Example stricter admin rule
+                crate::monitoring::rate_limit_middleware::RouteRule { pattern: "/reindex".into(), match_kind: crate::monitoring::rate_limit_middleware::MatchKind::Exact, qps: 0.5, burst: 2.0, label: Some("admin-reindex".into()) },
+                // Ensure upload constrained by prefix
+                crate::monitoring::rate_limit_middleware::RouteRule { pattern: "/upload".into(), match_kind: crate::monitoring::rate_limit_middleware::MatchKind::Prefix, qps: upload_qps.max(0.0), burst: upload_burst.max(0.0), label: Some("upload".into()) },
+            ],
+            exempt_prefixes: vec!["/".into(), "/health".into(), "/ready".into(), "/metrics".into()],
+        }.with_env_overrides();
+
+        // Log effective rate limit options for visibility
+        info!(
+            trust_proxy = opts.trust_proxy,
+            search_qps = opts.search_qps,
+            search_burst = opts.search_burst,
+            upload_qps = opts.upload_qps,
+            upload_burst = opts.upload_burst,
+            rules = %serde_json::to_string(&opts.rules).unwrap_or_default(),
+            exempt_prefixes = %serde_json::to_string(&opts.exempt_prefixes).unwrap_or_default(),
+            "Rate limit options initialized"
+        );
         let cors = Cors::default()
             .allowed_origin("http://127.0.0.1:3011")
             .allowed_origin("http://localhost:3011")
@@ -588,18 +695,20 @@ pub fn start_api_server(config: &ApiConfig) -> impl std::future::Future<Output =
         
         App::new()
             .wrap(cors)
+            .wrap(crate::trace_middleware::TraceMiddleware::new())
+            .wrap(crate::monitoring::rate_limit_middleware::RateLimitMiddleware::new_with_options(rl.clone(), opts.clone()))
             .route("/", web::get().to(root_handler))
             .route("/health", web::get().to(health_check))
             .route("/ready", web::get().to(ready_check))
             .route("/metrics", web::get().to(get_metrics))
-            .route("/upload", web::post().to(upload_document))
+            .route("/upload", web::post().to(upload_document_inner))
             .route("/documents", web::get().to(list_documents))
             .route("/documents/{filename}", web::delete().to(delete_document))
             .route("/reindex", web::post().to(reindex_handler))
             .route("/reindex/async", web::post().to(reindex_async_handler))
             .route("/reindex/status/{job_id}", web::get().to(reindex_status_handler))
             .route("/index/info", web::get().to(index_info_handler))
-            .route("/search", web::get().to(search_documents))
+            .route("/search", web::get().to(search_documents_inner))
             .route("/rerank", web::post().to(rerank))
             .route("/summarize", web::post().to(summarize))
             .route("/save_vectors", web::post().to(save_vectors_handler))
@@ -610,7 +719,7 @@ pub fn start_api_server(config: &ApiConfig) -> impl std::future::Future<Output =
             // Agentic endpoint
             .route("/agent", web::post().to(run_agent))
     })
-    .bind(config.bind_addr())
-    .unwrap_or_else(|_| panic!("Failed to bind to {}", config.bind_addr()))
+    .bind(bind_addr.clone())
+    .unwrap_or_else(|e| panic!("Failed to bind to {}: {}", bind_addr, e))
     .run()
 }

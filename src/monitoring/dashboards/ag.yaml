@@ -1,0 +1,11 @@
+apiVersion: 1
+
+providers:
+- name: "ag-dashboards"
+  orgId: 1
+  folder: "AG"
+  type: file
+  disableDeletion: false
+  editable: true
+  options:
+    path: /var/lib/grafana/dashboards/ag
