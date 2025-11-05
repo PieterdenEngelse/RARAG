@@ -1455,3 +1455,119 @@ Ctrl+C
 **Agentic RAG System**  
 **Created**: 2025-11-03  
 **Status**: Ready for Deployment
+## Rate limit configuration
+The server supports per-route, token-bucket rate limiting configured at startup.
+
+You can configure limits in three ways:
+- Inline JSON via env:
+  ```bash
+  export RATE_LIMIT_ROUTES='{"routes":[{"pattern":"/reindex","match_kind":"Exact","qps":0.5,"burst":2,"label":"admin-reindex"}],"exempt_prefixes":["/","/health","/ready","/metrics"]}'
+  ```
+- JSON file:
+  ```bash
+  export RATE_LIMIT_ROUTES_FILE=/path/to/rl-routes.json
+  ```
+- YAML file (requires building with --features rl_yaml or --features full):
+  ```bash
+  export RATE_LIMIT_ROUTES_FILE=/path/to/rl-routes.yaml
+  ```
+
+A sample JSON file is provided at:
+- `src/monitoring/dashboards/sample_rate_limit_routes.json`
+
+Common tuning guidance:
+- Search (read endpoints): QPS 5–10, burst 20–40 per-IP per-instance
+- Upload/mutating: QPS 1–2, burst 5–10
+- Admin (/reindex): QPS 0.2–0.5, burst 1–2
+
+
+## Systemd (service management)
+
+### User service (workstations)
+Recommended for per-user installs with no root changes.
+
+- ExecStart: `~/.local/bin/ag`
+- WorkingDirectory: `~/.local/share/ag`
+- EnvironmentFile: `~/.config/ag/ag.env`
+
+Steps:
+```bash
+mkdir -p ~/.config/systemd/user
+cp ops/systemd/ag.service ~/.config/systemd/user/ag.service
+mkdir -p ~/.config/ag
+cp ops/systemd/ag.env.example ~/.config/ag/ag.env  # edit as needed
+# Optional rate-limit rules file
+cp src/monitoring/dashboards/sample_rate_limit_routes.json ~/.config/ag/rl-routes.json
+systemctl --user daemon-reload
+systemctl --user enable --now ag
+journalctl --user -u ag -f
+```
+
+### System-wide service (servers)
+Use if the service must start at boot and be shared by all users.
+
+Typical layout:
+- ExecStart: `/usr/local/bin/ag`
+- WorkingDirectory: `/var/lib/ag`
+- EnvironmentFile: `/etc/default/ag` (Debian/Ubuntu) or `/etc/sysconfig/ag` (RHEL)
+- Rules file: `/etc/ag/rl-routes.json` or `/etc/ag/rl-routes.yaml`
+
+Steps:
+```bash
+sudo cp ops/systemd/ag.service /etc/systemd/system/ag.service  # adapt for system-wide
+sudo mkdir -p /etc/ag /var/lib/ag
+sudo cp ops/systemd/ag.env.example /etc/default/ag && sudoedit /etc/default/ag
+sudo systemctl daemon-reload
+sudo systemctl enable --now ag
+journalctl -u ag -f
+```
+
+
+## Windows Service (WinSW)
+
+This project can run as a Windows service using [WinSW](https://github.com/winsw/winsw).
+
+### Files
+- Template config: `ops/windows/winsw/ag.xml`
+
+### Build the binary (Windows)
+```powershell
+# Install Rust for Windows (MSVC) from https://rustup.rs/
+cargo build --release
+copy target\release\ag.exe C:\ag\ag.exe
+```
+
+### Configure WinSW
+1) Download a WinSW release (v2 or v3) and place it alongside `ag.exe`, e.g. `C:\ag\ag-service.exe`.
+2) Copy `ops\windows\winsw\ag.xml` to `C:\ag\ag.xml` and edit:
+   - `<executable>`: `C:\ag\ag.exe` (or `%BASE%\ag.exe` if in the same folder)
+   - `<workingdirectory>`: e.g. `C:\ag\data` (must exist; used for relative paths like `documents`)
+   - `<env>`: set `RUST_LOG`, `BACKEND_HOST`, `BACKEND_PORT`, etc.
+   - `RATE_LIMIT_ROUTES_FILE`: absolute path to JSON or YAML rules, e.g. `C:\ag\config\rl-routes.json`
+
+### Install and manage the service (elevated PowerShell)
+```powershell
+cd C:\ag
+# If you renamed WinSW, substitute that name
+./ag-service.exe install
+./ag-service.exe start
+./ag-service.exe status
+# Logs by default under C:\ag\logs
+```
+
+### Update and uninstall
+```powershell
+./ag-service.exe stop
+# edit ag.xml or env/rules files
+./ag-service.exe start
+
+# uninstall
+./ag-service.exe stop
+./ag-service.exe uninstall
+```
+
+### Notes
+- Relative upload path `documents` is created under `<workingdirectory>`.
+- PathManager defaults to `%USERPROFILE%\.local\share\ag` unless overridden via env.
+- For reverse proxy scenarios, set `TRUST_PROXY=true` only if headers are trustworthy.
+- YAML rules require building with `--features rl_yaml` (or `--features full`); otherwise use JSON.

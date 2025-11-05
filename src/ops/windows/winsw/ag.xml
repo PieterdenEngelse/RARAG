@@ -1,0 +1,40 @@
+<service>
+  <id>ag</id>
+  <name>Agentic RAG API Server</name>
+  <description>Agentic RAG API Server (Actix Web)</description>
+
+  <!-- Path to the executable (adjust to your installed location) -->
+  <executable>%BASE%\ag.exe</executable>
+  <!-- Alternatively, run via CMD to pass env: cmd /c ag.exe -->
+
+  <!-- Working directory (where relative paths like documents/ will be created) -->
+  <workingdirectory>%BASE%\data</workingdirectory>
+
+  <!-- Optional: environment variables -->
+  <env>
+    <var name="RUST_LOG" value="info"/>
+    <var name="BACKEND_HOST" value="127.0.0.1"/>
+    <var name="BACKEND_PORT" value="3010"/>
+    <var name="SKIP_INITIAL_INDEXING" value="true"/>
+    <var name="TRUST_PROXY" value="false"/>
+    <!-- Use absolute path to JSON/YAML rules file -->
+    <var name="RATE_LIMIT_ROUTES_FILE" value="%BASE%\config\rl-routes.json"/>
+    <var name="REDIS_ENABLED" value="false"/>
+  </env>
+
+  <!-- Logs -->
+  <logpath>%BASE%\logs</logpath>
+  <log mode="roll-by-size">
+    <sizeThreshold>10MB</sizeThreshold>
+    <keepFiles>10</keepFiles>
+  </log>
+
+  <!-- Service recovery -->
+  <onfailure action="restart" delay="5 sec"/>
+  <onfailure action="restart" delay="5 sec"/>
+  <onfailure action="restart" delay="5 sec"/>
+
+  <!-- Privileges (optional hardening) -->
+  <privileged>false</privileged>
+
+</service>

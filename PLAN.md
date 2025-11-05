@@ -762,3 +762,464 @@ Validation:
 - Full OpenTelemetry tracing exporter (OTLP/Jaeger)
 - Persistent distributed rate limiting (Redis-based)
 - Detailed pprof integration and UI
+
+Step 6 (Security and Hardening – Rate Limiting) is fully implemented and validated.
+
+What we implemented
+
+    Per-IP token bucket
+        Applied to /search and /upload initially, and extended to other sensitive endpoints (/rerank, /summarize, /save_vectors, /memory/*, /agent) as part of hardening.
+        Each remote IP has a token bucket refilled at RATE_LIMIT_QPS up to RATE_LIMIT_BURST.
+
+    LRU map for buckets
+        Buckets keyed by remote IP are stored in an in-process LRU with configurable capacity:
+            RATE_LIMIT_LRU_CAPACITY (default 1024)
+
+    429 behavior with Retry-After
+        When a bucket is empty, the request returns 429 Too Many Requests.
+        Reply includes Retry-After header set to ceil(1/QPS).
+
+    Env toggles
+        RATE_LIMIT_ENABLED=true to enable
+        RATE_LIMIT_QPS (float, default 1.0)
+        RATE_LIMIT_BURST (int, default 5)
+        Per-route overrides:
+            RATE_LIMIT_SEARCH_QPS/BURST
+            RATE_LIMIT_UPLOAD_QPS/BURST
+
+    IP detection (proxy-aware)
+        TRUST_PROXY=false (default): use real remote addr only
+        TRUST_PROXY=true: prefer X-Forwarded-For (first IP), then Forwarded (for=), then remote addr
+
+Validation performed
+
+    Configured small QPS/BURST (e.g., QPS=1, BURST=3)
+    Sent rapid requests to /search and /upload
+    Observed expected pattern:
+        First BURST requests return 200
+        Subsequent requests return 429 until refill
+    Verified Retry-After header present and >= 1
+    Confirmed Prometheus metrics reflect behavior:
+        request_latency_ms{method,route,status_class}
+        rate_limit_drops_by_route_total increases for /search (and others)
+        rate_limit_drops_total increases overall
+
+Additional hardening (beyond scope but added for robustness)
+
+    Per-route QPS/BURST (read vs write) to tune behavior safely
+    Trust-proxy toggle and tests
+    Static route label normalization for metrics (low cardinality)
+    Labeled drop metrics by route
+    CI-friendly tests:
+        Token refill test
+        Trust proxy toggle test
+        Read/write bucket behavior
+        LRU eviction test
+
+
+    If you want middleware to be the single enforcement point, we should remove or disable the per-handler allow_request_for_ip checks in api/mod.rs to avoid double limiting; or keep both intentionally.
+    Wire the middleware into HttpServer::new in api/mod.rs. Right now api/mod.rs initializes its own rate limit globals and does not wrap App with the middleware. I can add:
+        Create RateLimiter from ApiConfig.
+        .wrap(RateLimitMiddleware::new(...)) or route-specific scopes.
+    Optional: replace RoutePolicy’s env-based defaults with ApiConfig-derived values for a single source of truth.
+    Build/test: I can run cargo build/test if you want.
+
+Confirm what you’d like me to do next: A) Make middleware the only enforcement: remove per-handler guards and wrap App with RateLimitMiddleware using ApiConfig values. B) Keep current per-handler guards; only wrap specific routes with middleware. C) Just wire the middleware in without removing guards, for now.
+
+Once you choose, I’ll apply the changes and, if permitted, run a build to verify.
+
+advise me on a and b
+
+Great question. Here’s a clear comparison and recommendation for the two approaches.
+
+Option A — Middleware-only rate limiting
+
+    Pros
+        Single source of truth: consistent behavior across routes.
+        Less code in handlers; easier to maintain and reason about.
+        Better observability: all drops counted in one place (metrics).
+        Enforces limits before handler body parsing, which saves CPU/IO (especially for uploads).
+
+    Cons
+        If you need to limit by data that’s only available inside handlers (e.g., per-user from a JWT or request body), middleware alone can’t cover that easily.
+        If implemented with Rc per worker, each worker gets its own bucket, effectively multiplying the allowed throughput by the number of workers.
+
+    Implementation notes
+        Share limits across workers: switch RateLimitMiddleware to use Arc and inject it once outside HttpServer::new, then clone Arc inside the factory. Example: let rl = Arc::new(RateLimiter::new(cfg)); HttpServer::new(move || App::new().wrap(RateLimitMiddleware::new(rl.clone(), trust_proxy)) ...)
+        Remove per-handler allow_request_for_ip checks to avoid double-limiting.
+        Derive per-route QPS/burst from ApiConfig (not ad-hoc envs), so you have one config path.
+        Keep metrics updates in middleware only.
+
+    When to choose A
+        You want consistent, simple, IP-based rate limiting across the API.
+        You don’t need per-user or body-dependent limits.
+        You want to prevent expensive requests early (uploads, heavy POSTs).
+
+Option B — Keep per-handler guards and use middleware selectively
+
+    Pros
+        Flexibility to implement different keys or logic per endpoint (e.g., IP + user ID from headers/body).
+        You can keep existing handler logic while adding middleware only where it’s most beneficial (e.g., /upload for early rejection).
+        Can combine global coarse-grained (middleware) with fine-grained (handler) limits.
+
+    Cons
+        Higher complexity and maintenance: two enforcement points can drift.
+        Risk of double-limiting unless you carefully exclude overlapping routes from the middleware or disable handler checks for those routes.
+        Observability split across places unless you standardize metrics reporting.
+
+    Implementation notes
+        Use Actix scopes to apply middleware only to routes that don’t already have handler-level limits: App::new() .service(web::scope("/public").wrap(RateLimitMiddleware::new(rl.clone(), trust_proxy)) .route("/search", ...)) .route("/upload", web::post().to(upload_document_guarded)) // guarded in handler, not in middleware scope
+        Or add an exclude list to the middleware and early-return for those paths.
+        Keep metrics consistent: either emit drops in middleware or in the handler for any given route, not both.
+
+    When to choose B
+        You need endpoint-specific behavior that depends on identity or body content.
+        You want middleware only for certain routes (e.g., GETs), and handler logic for others (e.g., complex POSTs).
+
+My recommendation
+
+    Default to Option A (middleware-only), with Arc shared across workers, and remove per-handler checks. It’s simpler, consistent, and gives early rejection. If later you need per-user or more complex limits, you can add handler-level limits specifically for those endpoints while excluding them from the middleware.
+
+If you want, I can:
+
+    Implement A fully now: switch the middleware to Arc, wire it into the server with ApiConfig values, remove the per-handler allow_request_for_ip checks, and keep metrics only in middleware.
+    Or implement B: keep current handler guards, wrap only specific routes with middleware, and add a deny/allow list to avoid double-limiting.
+
+    Updated the systemd unit for a workstation user service using your desired paths:
+
+    ExecStart: %h/.local/bin/ag
+    WorkingDirectory: %h/.local/share/ag
+
+Details:
+
+    The unit is now written as a user service (no User/Group fields), intended to be installed under: ~/.config/systemd/user/ag.service
+    Environment file path (per-user): %h/.config/ag/ag.env
+    Example RATE_LIMIT_ROUTES_FILE path adjusted: %h/.config/ag/rl-routes.yaml
+    Install target changed to default.target for user services.
+
+How to install as a user service
+
+    mkdir -p ~/.config/systemd/user
+    cp ops/systemd/ag.service ~/.config/systemd/user/ag.service
+    mkdir -p ~/.config/ag
+    cp ops/systemd/ag.env.example ~/.config/ag/ag.env # then edit as needed
+    systemctl --user daemon-reload
+    systemctl --user enable --now ag
+    View logs: journalctl --user -u ag -f
+
+
+Choose a system-wide service when you need operational robustness and shared availability beyond a single logged-in user. Key reasons:
+
+    Starts at boot, independent of user sessions
+        Service is available before anyone logs in and keeps running after users log out.
+    Shared for all users
+        Other local users, system services, or reverse proxies can rely on it being up.
+    Centralized ops and security
+        Managed under /etc/systemd/system with root-owned config in /etc (immutable to regular users).
+        Runs under a dedicated service account (e.g., ag) with least-privilege and hardened unit options.
+    Predictable filesystem layout
+        Binary: /usr/local/bin/ag, data: /var/lib/ag, config: /etc/ag, logs via journald (and optionally /var/log/ag).
+    Better policy and resource control
+        Systemd cgroups, CPU/memory/IO limits, Restart policies, hardening directives, capabilities (e.g., CAP_NET_BIND_SERVICE for ports <1024).
+    Easier fleet management
+        Consistent installs and updates via package managers, Ansible, etc., with service life-cycle commands not tied to a specific user.
+    Integration-friendly
+        Plays well with system-wide reverse proxies (nginx, Caddy), firewalls, monitoring/metrics, and backup/rotation policies.
+
+When a user service is preferable
+
+    Personal workstation/dev: single-user, no need to run at boot, easy per-user env/files in /.config, per-user paths (/.local/bin, ~/.local/share).
+    You want zero root changes and fully contained user-space install.
+
+Rule of thumb
+
+    Production, multi-user machines, or shared daemons → system-wide service.
+    Individual developer laptops or quick trials → user service.
+
+
+
+
+ I implemented per-route classification and overrides, and compiled successfully.
+
+What changed
+
+    Middleware now supports:
+        Exempt prefixes (no rate limiting): for example “/”, “/health”, “/ready”, “/metrics”
+        Route rules with pattern matching (exact or prefix), custom qps/burst, and an optional label
+        Default classification when no rule matches:
+            upload class: /upload, /save_vectors, /reindex, /memory/store_rag, or DELETE requests
+            search class: everything else
+
+    Structures added in monitoring/rate_limit_middleware.rs:
+        MatchKind { Exact, Prefix }
+        RouteRule { pattern, match_kind, qps, burst, label }
+        RateLimitOptions extended with rules: Vec and exempt_prefixes: Vec
+        for_request(&ServiceRequest) -> Option<(qps, burst, label)>
+            None means exempt (middleware pass-through)
+            Some means rate-limited with qps/burst and a stable label
+
+    Server wiring in api/mod.rs:
+        RateLimitOptions is constructed from ApiConfig values
+        Example rules included:
+            Exact “/reindex” → qps: 0.5, burst: 2.0, label: “admin-reindex”
+            Prefix “/upload” → upload limits, label: “upload”
+        Exempt prefixes set to “/”, “/health”, “/ready”, “/metrics”
+        You can add/remove rules and exempt prefixes here as needed
+
+How to decide and customize
+
+    Keep health/ops endpoints in exempt_prefixes
+    For search-like (reads):
+        Higher qps (e.g., 10–50), larger burst (20–100)
+    For upload/mutations:
+        Lower qps (1–5), smaller burst (5–20)
+    For admin/heavy routes (e.g., /reindex):
+        Very low qps (0.2–1), small burst (1–5)
+    Override specifics using RouteRule entries to tune outliers
+    Use labels to keep metrics labels low-cardinality (string literals or route patterns)
+
+Where to adjust
+
+    Default class criteria:
+        monitoring/rate_limit_middleware.rs -> RateLimitOptions::classify_default
+    Custom rules and exemptions:
+        api/mod.rs in the RateLimitOptions initialization (rules and exempt_prefixes vecs)
+
+Metrics and logging
+
+    RATE_LIMIT_DROPS_TOTAL increments for each dropped request
+    RATE_LIMIT_DROPS_BY_ROUTE uses the computed route label (pattern or custom label)
+    Warnings log client IP, route label, qps/burst, retry_after
+
+A good way to choose “preferred” limits is to treat them like capacity planning decisions, grounded in cost, SLOs, and real traffic patterns. Use this checklist and formulas, then iterate with metrics.
+
+    Classify endpoints by cost and risk
+
+    Exempt (no rate limit): health/ready/metrics and other operational checks.
+    Search class (read-only, small payloads, frequent):
+        GET /search, POST /rerank, POST /summarize, POST /agent
+        POST /memory/search_rag, POST /memory/recall_rag, GET /documents
+    Upload/write class (mutating or large payloads):
+        POST /upload, POST /save_vectors, POST /memory/store_rag, DELETE /documents/{filename}
+    Admin class (rare, heavy, system-impacting):
+        POST /reindex, POST /reindex/async
+
+    Set SLOs per class
+
+    Search: low latency (e.g., p95 < 200–500 ms), high availability.
+    Upload: tolerable latency (seconds), lower frequency.
+    Admin: very low QPS, avoid contention with user traffic.
+
+    Estimate per-request cost
+
+    Measure average latency and CPU/IO usage per endpoint in staging:
+        Use request_latency_ms histogram labels (already exposed) to get p50/p95/p99.
+        Check logs and system metrics (CPU, disk I/O) during load.
+    Heavier endpoints (reindex, big uploads) should have much tighter limits.
+
+    Size per-instance limits from capacity
+
+    Decide a safe utilization target (e.g., 60–70% of CPU).
+    Rough guide: per-instance QPS ≈ (concurrency capacity / avg_latency_seconds).
+        With Actix workers = vCPU count (default), if avg search latency ≈ 100 ms:
+            Each worker can “turn over” ≈ 10 req/s at 100% utilization. With 8 workers and 70% target:
+            QPS_target ≈ 8 × 10 × 0.7 = ~56 QPS for search per instance.
+    Then split across key dimensions:
+        If per-IP (current design) and you expect 10 active IPs concurrently:
+            Per-IP QPS ≈ 56 / 10 = ~5–6 QPS
+    Apply a safety margin (e.g., ×0.8) for jitter.
+
+    Choose burst to absorb short spikes
+
+    Token-bucket burst usually = QPS × spike_window_seconds.
+    Common choices: 1–2 seconds of QPS.
+        If per-IP QPS = 5 → burst 5–10.
+    Admin endpoints: burst often 1–2 (you really want to serialize them).
+
+    Start with sane defaults; refine with metrics
+
+    Watch for:
+        High drops at middleware (RATE_LIMIT_DROPS_BY_ROUTE) → limits too tight (or abuse).
+        Rising p95/p99 latency → limits too loose for current capacity.
+        Error rates from dependencies → consider restricting endpoints that stress those services.
+
+    Adjust for deployment topology
+
+    Limits are per-instance right now (local in-memory buckets). If you scale to N instances, effective total cluster QPS ≈ N × per-instance QPS.
+    If you plan cluster-wide fairness, you’d need a shared limiter (e.g., Redis) keyed by IP/API key. Otherwise size per-instance limits accordingly.
+
+    Security and fairness considerations
+
+    If behind a proxy, ensure trust_proxy=true so you rate-limit by the true client IP, not the load balancer IP.
+    If you have authentication, consider switching from per-IP to per-user/API-key buckets for fairness.
+
+Initial recommendations for your endpoints (per instance, per IP)
+
+    Exempt
+        “/”, “/health”, “/ready”, “/metrics”
+    Search class
+        QPS: 5–10, Burst: 20–40 (per IP)
+    Upload class
+        QPS: 1–2, Burst: 5–10 (per IP)
+    Admin class (/reindex, /reindex/async)
+        QPS: 0.2–0.5 (1 call every 2–5 seconds), Burst: 1–2
+        Note: You already have a concurrency guard for reindex; keep the QPS low to prevent repeated triggers.
+
+Concrete example rules (per instance)
+
+    “/reindex” (exact): qps 0.5, burst 2, label “admin-reindex”
+    “/upload” (prefix): qps 2, burst 5, label “upload”
+    “/save_vectors” (exact): qps 1, burst 5, label “upload-save”
+    “/search”, “/rerank”, “/summarize”, “/agent” (exact): qps 10, burst 40, label “search”
+    “/memory/store_rag” (exact): qps 1, burst 5, label “upload-store”
+    “/memory/search_rag”, “/memory/recall_rag” (exact): qps 5, burst 20, label “search-memory”
+    Exempt prefixes: “/”, “/health”, “/ready”, “/metrics”
+
+How to iterate
+
+    Roll out conservative (lower QPS), monitor latency and drops for 24–48h.
+    Increase search QPS if p95 is comfortably below target and drops are minimal.
+    Tighten upload/admin if they cause resource contention or background jobs starve.
+    Revisit after major features or data growth (e.g., index size growth increases cost of /search).
+
+If you’d like, I can:
+
+    Set these initial limits directly in your rules configuration.
+    Add loaders to parse RATE_LIMIT_ROUTES (JSON) or RATE_LIMIT_ROUTES_FILE (YAML/JSON) so you can adjust without code changes.
+Summary of what’s in place now
+
+    Middleware-only rate limiting with:
+        Per-route classification (search vs upload) plus rule-based overrides
+        Exempt prefixes for health/ops endpoints
+        Trust-proxy-aware client IP extraction
+        Retry-After header and JSON body on 429s
+        Prometheus counters (drops total and by route)
+    Config-driven rules:
+        RATE_LIMIT_ROUTES (JSON array or object with routes/exempt_prefixes)
+        RATE_LIMIT_ROUTES_FILE (path to JSON file)
+        RATE_LIMIT_EXEMPT_PREFIXES (JSON array override)
+    Startup logging of effective options, rules, and exemptions
+
+Added:
+
+    Environment-driven config loaded at startup:
+        RATE_LIMIT_ROUTES (JSON) and RATE_LIMIT_ROUTES_FILE (path to JSON)
+        RATE_LIMIT_EXEMPT_PREFIXES (JSON array as fallback)
+    Safety messages:
+        If RATE_LIMIT_ROUTES_FILE points to .yml or .yaml, a warning logs that only JSON is supported (convert YAML to JSON).
+        Warns on file read failure.
+    Startup visibility:
+        Logs effective options: trust_proxy, search/upload defaults, rules, exempt prefixes.
+    Sample file:
+        monitoring/dashboards/sample_rate_limit_routes.json with recommended initial limits for your endpoints.
+
+How to use
+
+    Use the sample file as a template: export RATE_LIMIT_ROUTES_FILE=/home/pde/ag/src/monitoring/dashboards/sample_rate_limit_routes.json
+    Or inline JSON: export RATE_LIMIT_ROUTES='{"routes":[{"pattern":"/reindex","match_kind":"Exact","qps":0.5,"burst":2,"label":"admin-reindex"}],"exempt_prefixes":["/","/health","/ready","/metrics"]}'
+    Optional exempt override: export RATE_LIMIT_EXEMPT_PREFIXES='["/","/health","/ready","/metrics"]'
+
+Notes
+
+    Middleware-only enforcement; no per-handler duplication.
+    Per-route metrics labels remain low-cardinality via explicit label or route pattern.
+    Build verified clean.
+
+
+
+    monitoring/rate_limit_middleware.rs
+        Environment-driven overrides now try:
+            RATE_LIMIT_ROUTES (JSON)
+            RATE_LIMIT_ROUTES_FILE
+                JSON parsing by default
+                If the file has .yml/.yaml and the rl_yaml feature is enabled, it will parse YAML (both array and object forms)
+                If YAML is provided but rl_yaml is not enabled, it logs a warning advising to enable the feature or convert to JSON
+        Added compile-time gates:
+            #[cfg(feature = "rl_yaml")] use serde_yaml;
+        Kept warnings informative if rl_yaml is not declared in Cargo features (build still succeeds)
+
+    Sample config added
+        monitoring/dashboards/sample_rate_limit_routes.json
+        This file includes recommended initial rules for your endpoints and an exempt_prefixes list
+
+How to use
+
+    JSON via env: export RATE_LIMIT_ROUTES='{ "routes":[ {"pattern":"/reindex","match_kind":"Exact","qps":0.5,"burst":2,"label":"admin-reindex"}, {"pattern":"/upload","match_kind":"Prefix","qps":2,"burst":5,"label":"upload"} ], "exempt_prefixes":["/","/health","/ready","/metrics"] }'
+
+    JSON via file: export RATE_LIMIT_ROUTES_FILE=/home/pde/ag/src/monitoring/dashboards/sample_rate_limit_routes.json
+
+    YAML via file (optional)
+        Put YAML in a file like /etc/ag/rl-routes.yaml
+        Enable yaml feature for the crate (requires adding in Cargo.toml): [features] rl_yaml = ["serde_yaml"]
+        Then: export RATE_LIMIT_ROUTES_FILE=/etc/ag/rl-routes.yaml
+
+How to use a YAML rules file
+
+    Create YAML file, e.g., /etc/ag/rl-routes.yaml: routes:
+        pattern: "/reindex" match_kind: Exact qps: 0.5 burst: 2 label: "admin-reindex"
+        pattern: "/upload" match_kind: Prefix qps: 2 burst: 5 label: "upload" exempt_prefixes:
+        "/"
+        "/health"
+        "/ready"
+        "/metrics"
+    Set env: export RATE_LIMIT_ROUTES_FILE=/etc/ag/rl-routes.yaml export RUST_LOG=info
+    Start your app; you'll see a “Rate limit options initialized” log with the effective rules.
+
+
+The server started with the absolute JSON rules file, and the “Rate limit options initialized” logs now show the loaded rules:
+
+    rules = [ {"pattern":"/reindex","match_kind":"Exact","qps":0.5,"burst":2.0,"label":"admin-reindex"}, {"pattern":"/upload","match_kind":"Prefix","qps":2.0,"burst":5.0,"label":"upload"}, {"pattern":"/save_vectors","match_kind":"Exact","qps":1.0,"burst":5.0,"label":"upload-save"}, {"pattern":"/search","match_kind":"Exact","qps":10.0,"burst":40.0,"label":"search"}, {"pattern":"/rerank","match_kind":"Exact","qps":10.0,"burst":40.0,"label":"search"}, {"pattern":"/summarize","match_kind":"Exact","qps":10.0,"burst":40.0,"label":"search"}, {"pattern":"/agent","match_kind":"Exact","qps":10.0,"burst":40.0,"label":"search"}, {"pattern":"/memory/store_rag","match_kind":"Exact","qps":1.0,"burst":5.0,"label":"upload-store"}, {"pattern":"/memory/search_rag","match_kind":"Exact","qps":5.0,"burst":20.0,"label":"search-memory"}, {"pattern":"/memory/recall_rag","match_kind":"Exact","qps":5.0,"burst":20.0,"label":"search-memory"} ]
+    exempt_prefixes = ["/", "/health", "/ready", "/metrics"]
+
+That confirms env-based rules loading works end-to-end. You’re good to:
+
+    Adjust the JSON file and restart to update policies, or
+    Switch to YAML by using RATE_LIMIT_ROUTES_FILE=/path/to/routes.yaml and building with --features rl_yaml or --features full.
+
+
+Add a systemd unit snippet that sets those env vars so your service picks them up at boot.
+
+I’ll put a sample unit in the repo and note the target system path:
+
+    In the repo (for versioning and review):
+        installer/systemd/ag.service
+        installer/systemd/README.md (how to install, enable, override)
+        Optional: installer/systemd/ag.env (example env file)
+
+    On the server (where it’s actually used by systemd):
+        /etc/systemd/system/ag.service (copy the unit here)
+        Optional overrides:
+            /etc/systemd/system/ag.service.d/override.conf (for Environment/EnvironmentFile, limits, etc.)
+        Optional env file:
+            Debian/Ubuntu: /etc/default/ag
+            RHEL/CentOS: /etc/sysconfig/ag
+
+PHASE 16: Four Implementation Paths (Choose ONE)
+
+Path A: Distributed Tracing
+1. OpenTelemetry Integration - Instrument application with OTLP protocol
+2. Trace Propagation - Trace context across services
+3. Performance Analysis - Analyze trace data
+4. Request Correlation IDs - Link traces to requests
+5. Jaeger/Backend Integration - Store and visualize traces
+
+Path B: Observability Dashboard
+6. Prometheus Integration - Expose metrics endpoint
+7. Grafana Setup - Connect to Prometheus
+8. Custom Dashboards - Create visualizations
+9. Alert Rules - Define alerting thresholds
+10. Dashboard Templates - Reusable dashboard configs
+
+Path C: Log Aggregation
+11. ELK Stack Integration - Elasticsearch, Logstash, Kibana setup
+12. Log Shipping from Files - From ~/.agentic-rag/logs
+13. Centralized Search - Query across all logs
+14. Historical Analysis - Time-based log analysis
+15. Log Retention Policies - Archival and cleanup
+
+Path D: Database Monitoring
+16. Query Performance Tracking - Capture slow queries
+17. Connection Pool Monitoring - Track pool stats
+18. Index Usage Analysis - Identify unused indexes
+19. Replication Lag Monitoring - For distributed DBs
+20. Database Alerts - Performance thresholds

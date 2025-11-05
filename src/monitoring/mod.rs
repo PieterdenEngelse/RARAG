@@ -24,6 +24,7 @@ pub mod alerting_hooks;
 pub mod distributed_tracing;
 pub mod trace_middleware;
 pub mod performance_analysis;
+pub mod rate_limit_middleware;
 
 
 pub use config::MonitoringConfig;
