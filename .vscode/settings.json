@@ -1,21 +1,3 @@
-{
-  "files.autoSave": "afterDelay",
-  "files.autoSaveDelay": 1500,
-  "rust-analyzer.cargo.runBuildScripts": true,
-  "rust-analyzer.checkOnSave.command": "clippy",
-  "editor.formatOnSave": true,
-  "editor.codeActionsOnSave": {
-    "source.fixAll": "explicit"
-  },
-  "terminal.integrated.defaultProfile.linux": "bash",
-  "editor.tabSize": 4,
-  "editor.rulers": [
-    100
-  ],
-  "editor.wordWrap": "on",
-  "rust-analyzer.enable": false,
-  "codium.codeCompletion.enable": true,
-  "codium.terminalAllowedCommands": [
-    "*"
-  ]
-}
+version https://git-lfs.github.com/spec/v1
+oid sha256:f37f4541f2e23e61a3a7ed853d78accaff8d77c1d1c26d9af64a17317f816a59
+size 525

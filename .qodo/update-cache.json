@@ -1,7 +1,3 @@
-{
-  "failedInstallations": 0,
-  "lastChecked": 1761905879402,
-  "latestVersion": "0.30.2",
-  "currentVersion": "0.30.2",
-  "updateAvailable": false
-}
+version https://git-lfs.github.com/spec/v1
+oid sha256:52df0ecbb0e26577fb41f248ddd2557e8573b4f8fe91ecc8eb9521fc97e9e39c
+size 149
