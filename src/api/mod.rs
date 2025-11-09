@@ -161,34 +161,18 @@ async fn ready_check() -> Result<HttpResponse, Error> {
     }
 }
 
+/// Phase 16: Export metrics in Prometheus text format
+/// GET /monitoring/metrics
+/// Returns: Prometheus-compliant text format metrics
 async fn get_metrics() -> Result<HttpResponse, Error> {
-    let request_id = generate_request_id();
-    if let Some(retriever) = RETRIEVER.get() {
-        match retriever.lock() {
-            Ok(retriever) => {
-                let metrics = retriever.get_metrics();
-                Ok(HttpResponse::Ok().json(json!({
-                    "metrics": metrics,
-                    "request_id": request_id
-                })))
-            }
-            Err(e) => {
-                Ok(HttpResponse::InternalServerError().json(json!({
-                    "status": "error",
-                    "error": format!("Failed to acquire lock: {}", e),
-                    "request_id": request_id
-                })))
-            }
-        }
-    } else {
-        Ok(HttpResponse::ServiceUnavailable().json(json!({
-            "status": "error",
-            "message": "Retriever not initialized",
-            "request_id": request_id
-        })))
-    }
+    // Export metrics in Prometheus text format (not JSON)
+    // Phase 16 Step 3: OTLP Exporting - Prometheus format compliance
+    let prometheus_text = crate::monitoring::metrics::export_prometheus();
+    
+    Ok(HttpResponse::Ok()
+        .content_type("text/plain; charset=utf-8")
+        .body(prometheus_text))
 }
-
 
 async fn upload_document_inner(mut payload: Multipart) -> Result<HttpResponse, Error> {
     let request_id = generate_request_id();
@@ -669,7 +653,7 @@ pub fn start_api_server(config: &ApiConfig) -> impl std::future::Future<Output =
                 // Ensure upload constrained by prefix
                 crate::monitoring::rate_limit_middleware::RouteRule { pattern: "/upload".into(), match_kind: crate::monitoring::rate_limit_middleware::MatchKind::Prefix, qps: upload_qps.max(0.0), burst: upload_burst.max(0.0), label: Some("upload".into()) },
             ],
-            exempt_prefixes: vec!["/".into(), "/health".into(), "/ready".into(), "/metrics".into()],
+            exempt_prefixes: vec!["/".into(), "/health".into(), "/ready".into(), "/metrics".into(), "/monitoring".into()],
         }.with_env_overrides();
 
         // Log effective rate limit options for visibility
@@ -697,10 +681,22 @@ pub fn start_api_server(config: &ApiConfig) -> impl std::future::Future<Output =
             .wrap(cors)
             .wrap(crate::trace_middleware::TraceMiddleware::new())
             .wrap(crate::monitoring::rate_limit_middleware::RateLimitMiddleware::new_with_options(rl.clone(), opts.clone()))
+            
+            // ============================================================================
+            // MONITORING ROUTES (Phase 16 Step 3 - OTLP Exporting)
+            // Exports metrics in Prometheus text format for Prometheus scraping
+            // ============================================================================
+            .service(
+                web::scope("/monitoring")
+                    .route("/health", web::get().to(health_check))
+                    .route("/ready", web::get().to(ready_check))
+                    .route("/metrics", web::get().to(get_metrics))  // ← Prometheus format
+            )
+            
+            // ============================================================================
+            // ROOT & CORE ROUTES
+            // ============================================================================
             .route("/", web::get().to(root_handler))
-            .route("/health", web::get().to(health_check))
-            .route("/ready", web::get().to(ready_check))
-            .route("/metrics", web::get().to(get_metrics))
             .route("/upload", web::post().to(upload_document_inner))
             .route("/documents", web::get().to(list_documents))
             .route("/documents/{filename}", web::delete().to(delete_document))
@@ -712,11 +708,17 @@ pub fn start_api_server(config: &ApiConfig) -> impl std::future::Future<Output =
             .route("/rerank", web::post().to(rerank))
             .route("/summarize", web::post().to(summarize))
             .route("/save_vectors", web::post().to(save_vectors_handler))
-            // RAG memory endpoints
+            
+            // ============================================================================
+            // RAG MEMORY ROUTES
+            // ============================================================================
             .route("/memory/store_rag", web::post().to(store_rag_memory))
             .route("/memory/search_rag", web::post().to(search_rag_memory))
             .route("/memory/recall_rag", web::post().to(recall_rag_memory))
-            // Agentic endpoint
+            
+            // ============================================================================
+            // AGENT ROUTES
+            // ============================================================================
             .route("/agent", web::post().to(run_agent))
     })
     .bind(bind_addr.clone())

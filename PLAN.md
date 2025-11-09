@@ -1196,30 +1196,213 @@ I’ll put a sample unit in the repo and note the target system path:
 
 PHASE 16: Four Implementation Paths (Choose ONE)
 
-Path A: Distributed Tracing
-1. OpenTelemetry Integration - Instrument application with OTLP protocol
-2. Trace Propagation - Trace context across services
-3. Performance Analysis - Analyze trace data
-4. Request Correlation IDs - Link traces to requests
-5. Jaeger/Backend Integration - Store and visualize traces
 
-Path B: Observability Dashboard
-6. Prometheus Integration - Expose metrics endpoint
-7. Grafana Setup - Connect to Prometheus
-8. Custom Dashboards - Create visualizations
-9. Alert Rules - Define alerting thresholds
-10. Dashboard Templates - Reusable dashboard configs
 
-Path C: Log Aggregation
-11. ELK Stack Integration - Elasticsearch, Logstash, Kibana setup
-12. Log Shipping from Files - From ~/.agentic-rag/logs
-13. Centralized Search - Query across all logs
-14. Historical Analysis - Time-based log analysis
-15. Log Retention Policies - Archival and cleanup
+    Prometheus Integration (6) – Expose and standardize /monitoring/metrics with stable labels
 
-Path D: Database Monitoring
-16. Query Performance Tracking - Capture slow queries
-17. Connection Pool Monitoring - Track pool stats
-18. Index Usage Analysis - Identify unused indexes
-19. Replication Lag Monitoring - For distributed DBs
-20. Database Alerts - Performance thresholds
+    Grafana Setup (7) – Provide scrape config and quick-start deployment (docker-compose or k8s)
+
+    Custom Dashboards (8) – Ship a ready-to-import dashboard JSON (health, latency, errors, throughput, CPU, memory)
+
+    Alert Rules (9) – Example alerts (error rate, p95 latency, CPU/memory thresholds)
+
+    Dashboard Templates (10) – Reusable, parameterized dashboards by env/service
+
+    OpenTelemetry Integration (1) – Add OTLP exporter and SDK, gated by env flags
+
+    Trace Propagation (2) – Ensure W3C tracecontext flows across requests and async tasks
+
+    Request Correlation IDs (4) – Inject correlation IDs; log trace_id/span_id; surface request ID in responses
+
+    Performance Analysis (3) – Instrument critical spans with attributes (endpoint, status, db op)
+
+    Jaeger/Backend Integration (5) – Jaeger/Tempo/OTel Collector setup and configs
+
+    Structured Log Shipping (12) – Ship JSON logs from ~/.agentic-rag/logs via Filebeat/Fluent Bit/Vector
+
+    Centralized Search (13) – Saved searches and indices aligned with trace IDs and service labels
+
+    ELK/Opensearch Integration (11) – Deployment configs, index templates/mappings
+
+    Historical Analysis (14) – Time-based visualizations; error categories; correlation with traces/metrics
+
+    Log Retention Policies (15) – ILM/TTL and hot-warm-cold guidance
+
+    Connection Pool Monitoring (17) – Export pool size, wait time, saturation as Prometheus metrics
+
+    Query Performance Tracking (16) – Slow-query logs and latency histograms by statement/endpoint
+
+    Database Alerts (20) – Pool saturation, slow-query thresholds, error rates
+
+    Index Usage Analysis (18) – Identify unused/missing indexes; provide tuning workflow
+
+    Replication Lag Monitoring (19) – If applicable; per-replica lag metrics and alerts
+
+1)
+
+Conclusion for Step 1
+
+    The Prometheus integration and /monitoring/metrics endpoint are already implemented.
+
+Suggested small improvements (optional)
+
+    Verify label cardinality standards (method, route, status) and ensure consistent naming conventions.
+    Add a basic app_info metric with version/build info if not already present.
+    Provide a sample Prometheus scrape config snippet in DEPLOYMENT.md to make onboarding easier.
+
+2)
+
+Proposed next actions for Step 2 (without tests):
+
+    Add Grafana provisioning assets:
+        Create src/monitoring/dashboards/ag/ag-latency-rate.json: ready-to-import dashboard covering:
+            app_info, request_latency_ms (p50/p95/p99), error rate, throughput (req/s), rate_limit_drops, search_latency_ms, reindex_duration_ms, index size and counts
+        Create src/monitoring/dashboards/datasources.yaml: Grafana datasource provisioning for Prometheus at http://prometheus:9090 (or localhost:9090 for local)
+    Add Prometheus alert rules:
+        Create src/monitoring/alerts/alerts-ag.yaml with examples:
+            High error rate (5xx > 1% for 5m)
+            High latency (p95 request_latency_ms > threshold)
+            Rate limit drops non-zero over window
+    Add a quick-start docker-compose:
+        docker-compose.observability.yml with Prometheus + Grafana:
+            Prometheus service mounting a prometheus.yml that scrapes your app
+            Grafana service mounting the provisioning files and dashboards
+    Update docs:
+        DEPLOYMENT.md: “Grafana quick-start” section with docker-compose commands and where to find dashboards
+        Link to provisioning/dashboards paths
+
+If you approve, I’ll add:
+
+    src/monitoring/dashboards/ag/ag-latency-rate.json
+    src/monitoring/dashboards/datasources.yaml
+    src/monitoring/alerts/alerts-ag.yaml
+    docker-compose.observability.yml
+    prometheus.yml.sample (or add snippet to DEPLOYMENT.md) And update DEPLOYMENT.md accordingly.
+
+
+    Add more panels (per-route latency, request breakdown by status_class)
+    Add a dashboard variable for environment/service
+    Add an “Overview” dashboard for system health if you run node_exporter
+
+Here’s what each enhancement means, why it’s useful, and how to implement it in your Grafana dashboards.
+
+    Add panels for per-route latency and request breakdown by status_class
+
+    What:
+        Per-route latency: Show latency percentiles (p50/p95/p99) for each HTTP route.
+        Request breakdown by status_class: Show how many requests return 2xx/4xx/5xx, optionally per route.
+    Why:
+        Quickly see which endpoints are slow or failing.
+        Spot regressions isolated to specific routes.
+    How (PromQL examples):
+        Per-route p95 latency (ms): histogram_quantile(0.95, sum by (route, le) (rate(request_latency_ms_bucket[5m])))
+        Requests per second by status_class: sum by (status_class) (rate(request_latency_ms_count[1m]))
+        Requests per second by route and status_class: sum by (route, status_class) (rate(request_latency_ms_count[1m]))
+        Error rate (%) by status_class: 100 * sum(rate(request_latency_ms_count{status_class="5xx"}[5m])) / clamp_min(sum(rate(request_latency_ms_count[5m])), 1e-9)
+    Panel types:
+        Time series for latency percentiles (one series per route).
+        Bar chart or time series for request rates, stacked by status_class.
+    Tips:
+        If you have many routes, add a dashboard variable (see #2) and use it to filter to a single route to keep charts readable.
+
+    Add a dashboard variable for environment/service
+
+    What:
+        Variables let you filter the dashboard by labels such as env (dev/staging/prod) or service name.
+    Why:
+        Reuse the same dashboard across environments or services without duplicating JSON.
+    How:
+        Add a query variable (e.g., env) that pulls distinct label values from your metrics. If your metrics include a label like env, use:
+            Query type: Label values
+            Datasource: Prometheus
+            Query (Grafana UI): label_values(request_latency_ms_count, env)
+        Then reference it in panel queries:
+            Add {env="$env"} to metric selectors, e.g.: sum by (status_class) (rate(request_latency_ms_count{env="$env"}[1m]))
+        If you don’t yet emit an env label:
+            You can add it via Prometheus relabeling or inject it into the app as a constant label on your registry, but the cleanest is to add it at metric emission time.
+    Optional additional variable:
+        route: label_values(request_latency_ms_count{env="$env"}, route)
+        Use it to filter per-route panels: {..., route="$route"}
+
+    Add an “Overview” dashboard for system health (node_exporter)
+
+    What:
+        A high-level system dashboard (CPU, memory, disk, network) using node_exporter metrics alongside your app metrics.
+    Why:
+        Correlate app performance issues with system resource saturation.
+    How:
+        Install node_exporter on the host and add a Prometheus scrape job for it (default metrics_path /metrics).
+        Add panels using node_exporter metrics:
+            CPU usage:
+                100 - (avg by (instance) (rate(node_cpu_seconds_total{mode="idle"}[5m])) * 100)
+            Memory usage:
+                100 * (1 - (node_memory_MemAvailable_bytes / node_memory_MemTotal_bytes))
+            Disk space usage:
+                100 * (node_filesystem_size_bytes{fstype!"tmpfs|overlay"} - node_filesystem_free_bytes{fstype!"tmpfs|overlay"}) / node_filesystem_size_bytes{fstype!~"tmpfs|overlay"}
+            Disk IO (reads/writes per second):
+                rate(node_disk_reads_completed_total[5m]), rate(node_disk_writes_completed_total[5m])
+            Network throughput:
+                rate(node_network_receive_bytes_total[5m]), rate(node_network_transmit_bytes_total[5m])
+        Suggested panels:
+            CPU overall utilization (time series)
+            Memory used (%) (stat + time series)
+            Disk usage per filesystem (bar chart)
+            Disk IO R/W (time series)
+            Network in/out (time series)
+    Tip:
+        Add an instance variable (label_values up{job="node"}, instance) to switch hosts if you monitor multiple nodes.
+
+Putting it together
+
+    Extend your existing “AG – Latency & Rate” dashboard:
+        Add two rows:
+            “Route Analysis”: per-route p95/p99 latency, request rate by route, error rate by route/status_class
+            “Status Breakdown”: stacked series showing 2xx/4xx/5xx ratios
+        Add variables:
+            env (if available), route (optional)
+    Create a new “System Overview” dashboard for node_exporter (if you run it):
+        Include CPU, memory, disk, network panels as above.
+
+If you want, I can:
+
+    Update your existing dashboard JSON to include the per-route and status_class panels and variables.
+    Add a new overview dashboard JSON (e.g., src/monitoring/dashboards/ag/ag-system-overview.json) for node_exporter. Just say “proceed” and specify whether you have an env label on your metrics yet, and whether node_exporter is running (and its Prometheus job name).
+
+    Here’s the implementation with copy-paste commands to enable hot reload.
+
+    Stop any existing Prometheus on 9090 (gracefully)
+
+    Find PID and stop: pgrep -af prometheus ss -ltnp | grep 9090
+
+Replace with the number you see from either command:
+
+kill -TERM
+
+    Start Prometheus with lifecycle enabled cd /home/pde/promet mkdir -p ./data nohup ./prometheus --config.file=./prometheus.yml --storage.tsdb.path=./data --web.listen-address=127.0.0.1:9090 --web.enable-lifecycle > ./prometheus.log 2>&1 & echo $! > ./prometheus.pid
+
+    Verify it’s healthy curl -sS -w '\nHTTP %{http_code}\n' http://127.0.0.1:9090/-/healthy
+
+    Test hot reload
+
+    After editing prometheus.yml (e.g., adding/changing a scrape_config), reload without restart: curl -X POST -sS -w '\nHTTP %{http_code}\n' http://127.0.0.1:9090/-/reload
+
+Expected: HTTP 200. If it returns 500, check ./prometheus.log for YAML errors; the previous good config remains active.
+
+Optional: easy start/stop/reload helpers
+
+    Add to your shell (e.g., ~/.bashrc), then source it: prom_dir="/home/pde/promet" alias prom_start='cd "$prom_dir" && mkdir -p ./data && nohup ./prometheus --config.file=./prometheus.yml --storage.tsdb.path=./data --web.listen-address=127.0.0.1:9090 --web.enable-lifecycle > ./prometheus.log 2>&1 & echo $! > ./prometheus.pid && echo "Started PID $(cat ./prometheus.pid)"' alias prom_stop='[ -f /home/pde/promet/prometheus.pid ] && kill -TERM $(cat /home/pde/promet/prometheus.pid) && rm -f /home/pde/promet/prometheus.pid || echo "No pidfile; stopping by port" && pkill -f "/home/pde/promet/prometheus" || true' alias prom_reload='curl -X POST -sS -w "\nHTTP %{http_code}\n" http://127.0.0.1:9090/-/reload'
+
+Option 1: Phase 16 Step 4 - Advanced Monitoring Features
+
+Grafana dashboards
+Alert rules
+Custom metrics
+
+Option 2: Create OTLP Modules - Distributed Tracing
+
+src/monitoring/otel_config.rs
+src/monitoring/otlp_exporter.rs
+src/monitoring/span_instrumentation.rs
+
+Option 3: Document Installer - Update installer considerations
+

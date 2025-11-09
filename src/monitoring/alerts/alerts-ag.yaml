@@ -1,0 +1,33 @@
+groups:
+  - name: ag-alerts
+    interval: 30s
+    rules:
+      - alert: HighErrorRate
+        expr: |
+          (sum(rate(request_latency_ms_count{status_class="5xx"}[5m])) /
+           clamp_min(sum(rate(request_latency_ms_count[5m])), 1e-9)) > 0.01
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "High HTTP 5xx error rate (>1% for 5m)"
+          description: "5xx error rate exceeded 1% over the last 5 minutes."
+
+      - alert: HighLatencyP95
+        expr: |
+          histogram_quantile(0.95, sum by (le) (rate(request_latency_ms_bucket[5m]))) > 500
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "High p95 request latency (>500ms for 5m)"
+          description: "p95 latency above 500ms over the last 5 minutes."
+
+      - alert: RateLimitDropsDetected
+        expr: sum(rate(rate_limit_drops_total[5m])) > 0
+        for: 5m
+        labels:
+          severity: info
+        annotations:
+          summary: "Rate limit drops observed"
+          description: "Requests are being dropped by rate limiting. Investigate recent traffic or limits."

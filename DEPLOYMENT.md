@@ -211,6 +211,24 @@ cargo run
 
 ## Monitoring
 
+### Prometheus Scrape Example
+
+Add this to your Prometheus configuration (prometheus.yml) to scrape the backend metrics:
+
+```yaml
+scrape_configs:
+  - job_name: ag
+    scrape_interval: 15s
+    static_configs:
+      - targets: ["localhost:3010"]
+    metrics_path: /monitoring/metrics
+    honor_labels: true
+```
+
+Label guidance:
+- request_latency_ms has labels: method, route, status_class
+- Keep label cardinality low; avoid embedding raw IDs in labels
+
 ### View Logs
 ```bash
 # Terminal with service running

@@ -1,10 +1,3 @@
-{
-  "theme": "light",
-  "diffDisplay": "auto",
-  "onboardingCompleted": true,
-  "update": {
-    "enabled": true,
-    "channel": "stable",
-    "checkInterval": 1
-  }
-}
+version https://git-lfs.github.com/spec/v1
+oid sha256:113943f386f8ae522e77df8ee31b971da125ad5ba4ccc4167e989d123b079ffd
+size 230

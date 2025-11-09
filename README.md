@@ -13,7 +13,12 @@ Set via environment variable before running the backend:
 RUST_LOG=info,tantivy=warn cargo run
 ```
 
-## Metrics Histogram Buckets (Optional)
+## Metrics and Prometheus
+
+- Metrics endpoint: GET /monitoring/metrics (Prometheus text format)
+- Includes app_info{app="ag",version="<pkg_version>"} and request/search/reindex metrics
+
+### Metrics Histogram Buckets (Optional)
 
 Override default Prometheus histogram buckets using environment variables:
 

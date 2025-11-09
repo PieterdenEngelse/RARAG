@@ -118,7 +118,7 @@ impl RateLimitOptions {
             match std::fs::read_to_string(&path) {
                 Ok(text) => {
                     // Try JSON first
-                    let (mut rules, mut exempt) = parse_json(&text);
+                    let (rules, exempt) = parse_json(&text);
 
                 // If not JSON and looks like YAML, try YAML (if feature enabled)
                 if rules.is_none() && (path.ends_with(".yml") || path.ends_with(".yaml")) {

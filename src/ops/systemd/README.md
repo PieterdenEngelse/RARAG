@@ -2,31 +2,50 @@
 
 This directory provides a sample systemd unit and environment file for running the Agentic RAG API server as a service.
 
+It consolidates the systemd guidance from the project root INSTALLER.md with additional operational notes.
+
 ## Files
 - `ag.service`: Sample unit file. Install to `/etc/systemd/system/ag.service`.
 - `ag.env.example`: Example environment file. Copy to `/etc/default/ag` (Debian/Ubuntu) or `/etc/sysconfig/ag` (RHEL/CentOS) and edit values.
+- Optional rate-limit rules: `/etc/ag/rl-routes.json` or `/etc/ag/rl-routes.yaml` (YAML requires build with `--features rl_yaml` or `--features full`).
 
-## Install
+## Workstation user service (per-user)
+Recommended for per-user installs with no root changes.
+
+- ExecStart: `~/.local/bin/ag`
+- WorkingDirectory: `~/.local/share/ag`
+- EnvironmentFile: `~/.config/ag/ag.env`
+
+Steps:
 ```bash
-# Copy unit
-sudo cp ops/systemd/ag.service /etc/systemd/system/ag.service
+mkdir -p ~/.config/systemd/user
+cp ops/systemd/ag.service ~/.config/systemd/user/ag.service
+mkdir -p ~/.config/ag
+cp ops/systemd/ag.env.example ~/.config/ag/ag.env  # edit as needed
+# Optional rate-limit rules file
+cp src/monitoring/dashboards/sample_rate_limit_routes.json ~/.config/ag/rl-routes.json
+systemctl --user daemon-reload
+systemctl --user enable --now ag
+journalctl --user -u ag -f
+```
 
-# Create config dir for app-specific files
-sudo mkdir -p /etc/ag
+## System-wide service (servers)
+Use if the service must start at boot and be shared by all users.
 
-# Copy environment (Debian/Ubuntu)
-sudo cp ops/systemd/ag.env.example /etc/default/ag
-# or (RHEL/CentOS)
-# sudo cp ops/systemd/ag.env.example /etc/sysconfig/ag
+Typical layout:
+- ExecStart: `/usr/local/bin/ag`
+- WorkingDirectory: `/var/lib/ag`
+- EnvironmentFile: `/etc/default/ag` (Debian/Ubuntu) or `/etc/sysconfig/ag` (RHEL)
+- Rules file: `/etc/ag/rl-routes.json` or `/etc/ag/rl-routes.yaml`
 
-# Provide rate-limit rules file (JSON or YAML)
-sudo cp src/monitoring/dashboards/sample_rate_limit_routes.json /etc/ag/rl-routes.json
-# For YAML, ensure binary built with `--features rl_yaml`
-# sudo cp path/to/rl-routes.yaml /etc/ag/rl-routes.yaml
-
-# Reload units and enable service
+Steps:
+```bash
+sudo cp ops/systemd/ag.service /etc/systemd/system/ag.service  # adapt for system-wide
+sudo mkdir -p /etc/ag /var/lib/ag
+sudo cp ops/systemd/ag.env.example /etc/default/ag && sudoedit /etc/default/ag
 sudo systemctl daemon-reload
 sudo systemctl enable --now ag
+journalctl -u ag -f
 ```
 
 ## Override configuration without editing the unit
