@@ -32,3 +32,35 @@ To run for a different platform, use the `--platform platform` flag. E.g.
 dx serve --platform desktop
 ```
 
+---
+
+## Tailwind guardrails (avoid Node OOM)
+
+- Tailwind content scanning has been scoped in `tailwind.config.js` to only:
+  - `./src/**/*.{rs,html,js,jsx,ts,tsx}`
+  - `./public/index.html`
+  - `./assets/**/*.html`
+- Use the provided npm scripts:
+  - `npm run css:build` – one-off build
+  - `npm run css:watch` – watcher
+- If your machine has tight RAM, increase Node’s heap for Tailwind:
+  - Temporary: `export NODE_OPTIONS="--max-old-space-size=4096"`
+  - Per command: `NODE_OPTIONS="--max-old-space-size=4096" npm run css:watch`
+
+Recommended dev flow:
+
+1. Build CSS once:
+   ```bash
+   cd frontend/fro
+   npm run css:build
+   ```
+2. Start Dioxus dev server in a separate terminal:
+   ```bash
+   cd frontend/fro
+   dx serve --platform web
+   ```
+3. If you need live CSS:
+   ```bash
+   cd frontend/fro
+   NODE_OPTIONS="--max-old-space-size=4096" npm run css:watch
+   ```

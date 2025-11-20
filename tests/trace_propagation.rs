@@ -216,6 +216,22 @@ mod trace_propagation_tests {
     }
 
     // ============================================================================
+    // TEST 7b: Trace Sampler - ParentBased (placeholder behavior)
+    // ============================================================================
+    #[test]
+    fn test_trace_sampler_parent_based_placeholder() {
+        // Current implementation treats ParentBased same as AlwaysOn (simplified)
+        let sampler = TraceSampler::ParentBased;
+
+        for i in 0..10 {
+            let should_sample = sampler.should_sample();
+            assert!(should_sample, "ParentBased sampler placeholder failed at request {}", i);
+        }
+
+        println!("✓ ParentBased trace sampler placeholder verified (10/10 requests sampled)");
+    }
+
+    // ============================================================================
     // TEST 8: Request ID Correlation Across Log Lines
     // ============================================================================
     #[test]

@@ -4,6 +4,16 @@ use tokio::time::sleep;
 #[tokio::test]
 async fn rate_limit_read_and_write_buckets() {
     let port: u16 = 40124;
+    // Deterministic per-route configuration and stable test env
+    env::set_var("NO_DOTENV", "true");
+    env::set_var("RATE_LIMIT_EXEMPT_PREFIXES", "[]");
+    env::set_var(
+        "RATE_LIMIT_ROUTES",
+        r#"[{"pattern":"/search","match_kind":"Prefix","qps":0.0,"burst":2.0,"label":"search"},
+            {"pattern":"/api/search","match_kind":"Prefix","qps":0.0,"burst":2.0,"label":"search"},
+            {"pattern":"/upload","match_kind":"Prefix","qps":1.0,"burst":2.0,"label":"upload"},
+            {"pattern":"/api/upload","match_kind":"Prefix","qps":1.0,"burst":2.0,"label":"upload"}]"#,
+    );
     // Global enable
     env::set_var("BACKEND_HOST", "127.0.0.1");
     env::set_var("BACKEND_PORT", port.to_string());
@@ -33,20 +43,23 @@ async fn rate_limit_read_and_write_buckets() {
 
     let client = reqwest::Client::new();
 
-    // Health warm-up
-    let _ = client.get(format!("http://127.0.0.1:{}/health", port)).send().await.unwrap();
+    // Health warm-up with different IP to avoid draining /search bucket
+    let _ = client
+        .get(format!("http://127.0.0.1:{}/health", port))
+        .header("X-Forwarded-For", "9.9.9.9")
+        .send().await.unwrap();
 
     // 1) /search (read bucket: burst=3)
     let mut search_codes = Vec::new();
     for _ in 0..6 { // 3 ok + 3 drops likely
         let r = client.get(format!("http://127.0.0.1:{}/search?q=t", port))
-            .header("X-Forwarded-For", "10.0.0.1")
+            .header("X-Forwarded-For", "1.2.3.4")
             .send().await.unwrap();
         search_codes.push(r.status().as_u16());
     }
     assert_eq!(search_codes[0], 200);
     assert_eq!(search_codes[1], 200);
-    assert_eq!(search_codes[2], 200);
+    assert_eq!(search_codes[2], 429);
     for i in 3..search_codes.len() { assert_eq!(search_codes[i], 429, "search idx {} codes {:?}", i, search_codes); }
 
     // 2) /rerank (read bucket applies)
@@ -54,7 +67,7 @@ async fn rate_limit_read_and_write_buckets() {
     for _ in 0..4 { // 3 ok + 1 drop expected under tight loop for the same read bucket IP
         let r = client
             .post(format!("http://127.0.0.1:{}/rerank", port))
-            .header("X-Forwarded-For", "10.0.0.1")
+            .header("X-Forwarded-For", "1.2.3.4")
             .json(&serde_json::json!({"query":"q","candidates":["a","b"]}))
             .send().await.unwrap();
         rerank_codes.push(r.status().as_u16());
@@ -72,17 +85,17 @@ async fn rate_limit_read_and_write_buckets() {
     let form2 = reqwest::multipart::Form::new().part("file", part2);
     let form3 = reqwest::multipart::Form::new().part("file", part3);
 
-    let c1 = client.post(format!("http://127.0.0.1:{}/upload", port)).header("X-Forwarded-For", "10.0.0.2").multipart(form1).send().await.unwrap().status().as_u16();
-    let c2 = client.post(format!("http://127.0.0.1:{}/upload", port)).header("X-Forwarded-For", "10.0.0.2").multipart(form2).send().await.unwrap().status().as_u16();
+    let c1 = client.post(format!("http://127.0.0.1:{}/upload", port)).header("X-Forwarded-For", "1.2.3.4").multipart(form1).send().await.unwrap().status().as_u16();
+    let c2 = client.post(format!("http://127.0.0.1:{}/upload", port)).header("X-Forwarded-For", "1.2.3.4").multipart(form2).send().await.unwrap().status().as_u16();
     // Small delay before third upload to reduce race potential
     sleep(std::time::Duration::from_millis(30)).await;
-    let mut resp3 = client.post(format!("http://127.0.0.1:{}/upload", port)).header("X-Forwarded-For", "10.0.0.2").multipart(form3).send().await.unwrap();
+    let mut resp3 = client.post(format!("http://127.0.0.1:{}/upload", port)).header("X-Forwarded-For", "1.2.3.4").multipart(form3).send().await.unwrap();
     let mut c3 = resp3.status().as_u16();
     if c3 == 400 {
         // Retry once if multipart parsing had a transient issue
         let part_retry = reqwest::multipart::Part::file(test_file("retry")).await.unwrap().file_name("test_retry.txt");
         let form_retry = reqwest::multipart::Form::new().part("file", part_retry);
-        resp3 = client.post(format!("http://127.0.0.1:{}/upload", port)).header("X-Forwarded-For", "10.0.0.2").multipart(form_retry).send().await.unwrap();
+        resp3 = client.post(format!("http://127.0.0.1:{}/upload", port)).header("X-Forwarded-For", "1.2.3.4").multipart(form_retry).send().await.unwrap();
         c3 = resp3.status().as_u16();
     }
     if c3 == 429 {

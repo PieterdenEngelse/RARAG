@@ -632,7 +632,8 @@ pub fn start_api_server(config: &ApiConfig) -> impl std::future::Future<Output =
     let upload_qps = config.rate_limit_upload_qps.unwrap_or(rate_limit_qps);
     let upload_burst = config.rate_limit_upload_burst.unwrap_or(config.rate_limit_burst) as f64;
 
-    HttpServer::new(move || {
+    let force_single_worker = std::env::var("NO_DOTENV").map(|v| v.to_lowercase() == "true" || v == "1").unwrap_or(false);
+    let mut http_server = HttpServer::new(move || {
         // Shared RateLimiter across workers (middleware-only enforcement)
         let rl_cfg = crate::security::rate_limiter::RateLimiterConfig {
             enabled: rate_limit_enabled,
@@ -720,8 +721,12 @@ pub fn start_api_server(config: &ApiConfig) -> impl std::future::Future<Output =
             // AGENT ROUTES
             // ============================================================================
             .route("/agent", web::post().to(run_agent))
-    })
-    .bind(bind_addr.clone())
-    .unwrap_or_else(|e| panic!("Failed to bind to {}: {}", bind_addr, e))
-    .run()
+    });
+    if force_single_worker {
+        http_server = http_server.workers(1);
+    }
+    http_server
+        .bind(bind_addr.clone())
+        .unwrap_or_else(|e| panic!("Failed to bind to {}: {}", bind_addr, e))
+        .run()
 }

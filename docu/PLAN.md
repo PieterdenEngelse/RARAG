@@ -716,6 +716,8 @@ Tasks:
 Validation:
 - Configure small QPS/burst, send rapid requests, observe 429 responses after burst exhausted.
 
+Phase 15 Step 6 is COMPLETE! 🚀
+
 ---
 
 ## Implementation Notes
@@ -1405,4 +1407,431 @@ src/monitoring/otlp_exporter.rs
 src/monitoring/span_instrumentation.rs
 
 Option 3: Document Installer - Update installer considerations
+
+PHASE 16 - CREATE OTLP MODULES (Distributed Tracing)
+The 6 Substeps:
+Substep 1: OTEL Configuration Module (otel_config.rs)
+
+Initialize OpenTelemetry SDK
+Configure trace samplers
+Set up resource attributes
+Environment variable parsing
+
+Substep 2: OTLP Exporter Module (otlp_exporter.rs)
+
+Implement OTLP/gRPC exporter
+Batch span export
+Fallback to console exporter
+Error handling for network issues
+
+Substep 3: Span Instrumentation Module (span_instrumentation.rs)
+
+Create helper functions for span creation
+W3C Trace Context propagation
+B3 header support
+Request correlation IDs
+
+Substep 4: Middleware Integration (src/middleware/tracing_middleware.rs)
+
+Extract trace headers from requests
+Inject headers into responses
+Create spans for HTTP handlers
+Track handler duration
+
+Substep 5: HTTP Client Instrumentation (updates to existing client)
+
+Propagate trace context to external calls
+Create spans for HTTP requests
+Record response metadata
+
+Substep 6: Integration & Testing
+
+Add module declarations to lib.rs
+Integration tests for trace propagation
+End-to-end testing with Jaeger/compatible backend
+Installer impact documentation
+
+
+
+When ready for Phase 17
+
+    Switch:
+        export OTEL_CONSOLE_EXPORT=false
+        export OTEL_OTLP_EXPORT=true
+        export OTEL_EXPORTER_OTLP_ENDPOINT=http://127.0.0.1:4317 (after you run the collector)
+
+Explanation of: export OTEL_EXPORTER_OTLP_ENDPOINT=http://127.0.0.1:4317
+
+What it does
+
+    This environment variable tells the OpenTelemetry SDK where to send spans (and, if enabled, metrics) using the OTLP protocol.
+    With http://127.0.0.1:4317 you are pointing the SDK to an OTLP gRPC receiver running locally on port 4317 (the standard port for OTLP gRPC).
+
+When to set it
+
+    Only after your OpenTelemetry Collector (or Tempo/Grafana Agent) is up and listening on gRPC 4317.
+    It must match your collector config. For example, this collector config listens on gRPC 4317: receivers: otlp: protocols: grpc: endpoint: 127.0.0.1:4317
+
+What else to set when switching from console to collector
+
+    Enable OTLP export:
+        export OTEL_OTLP_EXPORT=true
+    Disable console export (to avoid duplicate output):
+        export OTEL_CONSOLE_EXPORT=false
+    Keep tracing enabled:
+        export TRACING_ENABLED=true
+        export OTEL_TRACES_ENABLED=true
+
+Verify the collector first
+
+    Make sure the collector is listening on 4317:
+        ss -lntp | grep :4317
+    If the collector prints received spans (with a logging exporter), you should see log entries when your app runs and sends spans.
+
+Common pitfalls
+
+    Protocol mismatch:
+        4317 is OTLP gRPC. If your collector is using OTLP HTTP (port 4318), then set:
+            export OTEL_EXPORTER_OTLP_ENDPOINT=http://127.0.0.1:4318
+            export OTEL_EXPORTER_OTLP_PROTOCOL=http/protobuf
+    Binding address:
+        If the collector listens on 0.0.0.0:4317, http://127.0.0.1:4317 will also work locally. If the collector runs in Docker, ensure the port is published to the host (-p 4317:4317).
+    Firewalls:
+        Ensure port 4317 is reachable between the app and the collector host.
+
+Where to set it
+
+    Temporary per-shell session:
+        export OTEL_EXPORTER_OTLP_ENDPOINT=http://127.0.0.1:4317
+    Persist in your shell profile:
+        echo 'export OTEL_EXPORTER_OTLP_ENDPOINT=http://127.0.0.1:4317' >> ~/.bashrc
+    In your project’s .env (if loaded by your app on startup):
+        OTEL_EXPORTER_OTLP_ENDPOINT=http://127.0.0.1:4317
+    For systemd services:
+        Put it in an EnvironmentFile or override.conf for the service.
+
+Quick checklist to switch from Phase 16 to Phase 17
+
+    Start your collector with the minimal config (listening on 127.0.0.1:4317).
+    Export these env vars before starting your app:
+        export OTEL_OTLP_EXPORT=true
+        export OTEL_CONSOLE_EXPORT=false
+        export OTEL_EXPORTER_OTLP_ENDPOINT=http://127.0.0.1:4317
+    Start your app; spans should reach the collector. If you kept a logging exporter in the collector, you’ll see spans printed there.
+
+If you want, I can provide the exact commands tailored for your shell and a short test script (curl requests) to generate sample spans and verify they’re arriving at the collector.
+
+
+
+Phase 17 (later): OTel Collector + persistent backend
+
+Install collector binary via installer
+Configure Grafana Tempo or Jaeger
+Persistent trace storage
+Production-ready observability stack
+
+OTel Collector is running!
+Listening on:
+
+✅ gRPC OTLP: 127.0.0.1:4317
+✅ HTTP OTLP: 127.0.0.1:4318
+✅ Metrics: :8888
+
+Phase 17 revised:
+
+Step 1: Install Grafana + Loki + Tempo (Docker compose)
+Step 2: Configure Grafana datasources
+Step 3: Build dashboards
+Step 4: Add alert rules
+Step 5: Fix OTLP exporter when SDK stabilizes
+
+PHASE 16: Four Implementation Paths (Choose ONE)
+
+    Prometheus Integration (6) – Expose and standardize /monitoring/metrics with stable labels
+    Grafana Setup (7) – Provide scrape config and quick-start deployment (docker-compose or k8s)
+    Custom Dashboards (8) – Ship a ready-to-import dashboard JSON (health, latency, errors, throughput, CPU, memory)
+    Alert Rules (9) – Example alerts (error rate, p95 latency, CPU/memory thresholds)
+    Dashboard Templates (10) – Reusable, parameterized dashboards by env/service
+    OpenTelemetry Integration (1) – Add OTLP exporter and SDK, gated by env flags
+    Trace Propagation (2) – Ensure W3C tracecontext flows across requests and async tasks
+    Request Correlation IDs (4) – Inject correlation IDs; log trace_id/span_id; surface request ID in responses
+    Performance Analysis (3) – Instrument critical spans with attributes (endpoint, status, db op)
+    Jaeger/Backend Integration (5) – Jaeger/Tempo/OTel Collector setup and configs
+    Structured Log Shipping (12) – Ship JSON logs from ~/.agentic-rag/logs via Filebeat/Fluent Bit/Vector
+    Centralized Search (13) – Saved searches and indices aligned with trace IDs and service labels
+    ELK/Opensearch Integration (11) – Deployment configs, index templates/mappings
+    Historical Analysis (14) – Time-based visualizations; error categories; correlation with traces/metrics
+    Log Retention Policies (15) – ILM/TTL and hot-warm-cold guidance
+    Connection Pool Monitoring (17) – Export pool size, wait time, saturation as Prometheus metrics
+    Query Performance Tracking (16) – Slow-query logs and latency histograms by statement/endpoint
+    Database Alerts (20) – Pool saturation, slow-query thresholds, error rates
+    Index Usage Analysis (18) – Identify unused/missing indexes; provide tuning workflow
+    Replication Lag Monitoring (19) – If applicable; per-replica lag metrics and alerts
+
+Conclusion for Step 1
+
+    The Prometheus integration and /monitoring/metrics endpoint are already implemented.
+
+Suggested small improvements (optional)
+
+    Verify label cardinality standards (method, route, status) and naming conventions.
+    Add a basic app_info metric (version/build).
+    Provide a sample Prometheus scrape config in DEPLOYMENT.md.
+
+Proposed next actions for Step 2 (without tests):
+
+    Add Grafana provisioning assets:
+        src/monitoring/dashboards/ag/ag-latency-rate.json (app_info, p50/p95/p99 latency, error rate, req/s, rate_limit_drops, search_latency_ms, reindex_duration_ms, index size/counts)
+        src/monitoring/dashboards/datasources.yaml (Prometheus at http://prometheus:9090 or localhost)
+    Add Prometheus alert rules:
+        src/monitoring/alerts/alerts-ag.yaml (5xx > 1% for 5m, p95 latency threshold, non-zero rate-limit drops)
+    Add quick-start docker-compose:
+        docker-compose.observability.yml for Prometheus + Grafana
+    Update docs:
+        DEPLOYMENT.md “Grafana quick-start”
+
+Additional dashboard enhancements guidance:
+
+    Per-route latency p95/p99 with PromQL examples
+    Request breakdown by status_class
+    Dashboard variables (env, route)
+    System Overview dashboard using node_exporter (CPU/mem/disk/network) with PromQL snippets
+
+Phase 16 – OTLP Modules (Distributed Tracing)
+
+    Substep 1: otel_config.rs – SDK init, sampler, resource attrs, env parsing
+    Substep 2: otlp_exporter.rs – OTLP/gRPC exporter, batch, console fallback, error handling
+    Substep 3: span_instrumentation.rs – helpers, W3C propagation, B3 support, correlation IDs
+    Substep 4: middleware/tracing_middleware.rs – extract/inject headers, HTTP spans, duration
+    Substep 5: HTTP client instrumentation – propagate context, client spans, response metadata
+    Substep 6: Integration & testing – module wiring, propagation tests, E2E with Jaeger; installer notes
+
+Phase 17 (preview) – switching to collector:
+
+    Set OTEL_OTLP_EXPORT=true, OTEL_CONSOLE_EXPORT=false, OTEL_EXPORTER_OTLP_ENDPOINT to 4317 (gRPC) or 4318 (HTTP) as appropriate
+    Checklist and pitfalls noted (protocol, binding, firewall)
+
+    Recommended pattern for your project
+
+    In the app (Rust backend): Use OpenTelemetry SDK exporting via OTLP (gRPC preferred) to the OTel Collector.
+    In the Collector: Receive OTLP; process (batch, tail-sample, attributes); export:
+        Traces: to Jaeger/Tempo/Elastic via OTLP or native exporter.
+        Metrics: to Prometheus (exposed endpoint) or an OTLP-capable metrics backend.
+        Logs: where applicable, via OTLP or native sinks.
+
+---
+
+# Phase 16 – Status & Implementation Notes (Completed)
+
+This section documents what was actually implemented for Phase 16 in this repo so far and how to operate it.
+
+## 1) OpenTelemetry SDK & OTLP Export (backend)
+
+Implemented in:
+
+- `src/monitoring/otel_config.rs`
+- `src/monitoring/trace_middleware.rs`
+- `src/main.rs`
+
+### 1.1 Environment variables
+
+The backend is controlled entirely via environment variables (typical values shown):
+
+```bash
+# Master switch for tracing
+OTEL_TRACES_ENABLED=true
+
+# Export control
+OTEL_OTLP_EXPORT=true         # Enable OTLP exporter
+OTEL_CONSOLE_EXPORT=false     # Enable/disable console exporter (JSON spans in ag logs)
+
+# OTLP endpoint (gRPC)
+OTEL_EXPORTER_OTLP_ENDPOINT=http://127.0.0.1:4318
+
+# Service identity
+OTEL_SERVICE_NAME=ag-backend
+OTEL_EXPORTER_OTLP_PROTOCOL=grpc
+```
+
+Behavior:
+
+- When `OTEL_TRACES_ENABLED=false`, `init_otel()` becomes a no-op and no tracer provider is configured.
+- When `OTEL_TRACES_ENABLED=true` and `OTEL_OTLP_EXPORT=true`, a BatchSpanProcessor is configured and spans are sent via gRPC OTLP to `OTEL_EXPORTER_OTLP_ENDPOINT`.
+- When `OTEL_CONSOLE_EXPORT=true`, spans are also exported to stdout as JSON (useful for debugging, noisy for production).
+
+### 1.2 Middleware spans (TraceMiddleware)
+
+- File: `src/monitoring/trace_middleware.rs`
+- Installed in `src/api/mod.rs`:
+
+```rust
+App::new()
+    .wrap(cors)
+    .wrap(crate::trace_middleware::TraceMiddleware::new())
+    .wrap(crate::monitoring::rate_limit_middleware::RateLimitMiddleware::new_with_options(rl.clone(), opts.clone()))
+    // routes...
+```
+
+For each HTTP request, the middleware:
+
+- Creates a structured `tracing` span `http_request` with attributes:
+  - `method`, `path` (route label), `client_ip`, `request_id`, `user_agent`
+- Creates an OpenTelemetry span via `global::tracer("ag-backend")` with attributes:
+  - `http.method`, `http.url`, `http.client_ip`, `http.request_id`, `http.user_agent`
+- On completion sets:
+  - `http.status_code` and `http.duration_ms`
+  - OTEL span status: `Status::Ok` for <400; `Status::Error` for >=400 or handler error
+- Records latency into Prometheus histogram `REQUEST_LATENCY_MS`.
+
+No explicit blocking flush is performed; spans are batched and exported asynchronously by the OTEL SDK.
+
+## 2) Collector & Tempo Integration
+
+The recommended dev setup (implemented and verified):
+
+### 2.1 OTel Collector (user service)
+
+- Installer script: `./install_otelcol.sh` (user mode)
+- Systemd user unit: `~/.config/systemd/user/otelcol.service`
+- Config file: `~/.config/otelcol/config.yaml`
+
+Example config (current):
+
+```yaml
+receivers:
+  otlp:
+    protocols:
+      grpc:
+        endpoint: 127.0.0.1:4318
+      http:
+        endpoint: 127.0.0.1:4319
+
+processors:
+  batch:
+    send_batch_size: 512
+    timeout: 5s
+  tail_sampling:
+    decision_wait: 2s
+    policies:
+      - name: errors
+        type: status_code
+        status_code:
+          status_codes: [ERROR]
+      - name: slow
+        type: latency
+        latency:
+          threshold_ms: 500
+      - name: sample_some
+        type: probabilistic
+        probabilistic:
+          sampling_percentage: 10
+
+exporters:
+  otlp/tempo:
+    endpoint: 127.0.0.1:4317
+    tls:
+      insecure: true
+
+service:
+  pipelines:
+    traces:
+      receivers: [otlp]
+      processors: [tail_sampling, batch]
+      exporters: [otlp/tempo]
+```
+
+Notes:
+
+- Collector gRPC OTLP receiver is on `127.0.0.1:4318`.
+- Tempo is expected to listen on OTLP gRPC `127.0.0.1:4317` (matching `otlp/tempo` exporter).
+- Metrics and logging exporters can be added if needed; currently traces go directly to Tempo.
+
+### 2.2 End-to-end verification (implemented)
+
+Dev/test procedure that is now known-good:
+
+1. Start otelcol (user mode):
+   ```bash
+   systemctl --user enable --now otelcol.service
+   ```
+2. Ensure backend env includes:
+   ```bash
+   OTEL_TRACES_ENABLED=true
+   OTEL_OTLP_EXPORT=true
+   OTEL_CONSOLE_EXPORT=false
+   OTEL_EXPORTER_OTLP_ENDPOINT=http://127.0.0.1:4318
+   OTEL_SERVICE_NAME=ag-backend
+   ```
+3. Restart backend:
+   ```bash
+   sudo systemctl restart ag.service
+   ```
+4. Generate traffic:
+   ```bash
+   curl -s http://127.0.0.1:3010/monitoring/health > /dev/null
+   curl -s "http://127.0.0.1:3010/search?q=test" > /dev/null
+   ```
+5. Confirm traces in Tempo via Grafana Tempo datasource; `ag-backend` appears as a service.
+
+## 3) Installer / Ops Notes (Phase 16)
+
+### 3.1 Backend service (systemd)
+
+- System-wide unit: `/etc/systemd/system/ag.service` (current deployment)
+
+Key fields (current):
+
+```ini
+[Unit]
+Description=Agentic RAG Backend (ag)
+After=network-online.target otelcol.service
+
+[Service]
+Type=simple
+User=pde
+WorkingDirectory=/home/pde/ag
+EnvironmentFile=/home/pde/.config/ag/ag.env
+ExecStart=/home/pde/ag/target/release/ag
+Restart=on-failure
+RestartSec=3
+
+[Install]
+WantedBy=multi-user.target
+```
+
+Notes:
+
+- All OTEL-related env is managed in `/home/pde/.config/ag/ag.env`.
+- No OTEL config is hard-coded in the unit; installer should only manage the env file and binary path.
+
+### 3.2 Recommended installer behavior
+
+For Phase 16, installers should:
+
+- Ensure the following are present and writable:
+  - Backend env file: `$HOME/.config/ag/ag.env` (or `/etc/default/ag` for system-wide installs)
+  - Collector config: `$HOME/.config/otelcol/config.yaml` (or `/etc/otelcol/config.yaml`)
+- Populate minimal OTEL env in the backend env file when tracing is desired:
+
+  ```bash
+  OTEL_TRACES_ENABLED=true
+  OTEL_OTLP_EXPORT=true
+  OTEL_CONSOLE_EXPORT=false
+  OTEL_EXPORTER_OTLP_ENDPOINT=http://127.0.0.1:4318
+  OTEL_SERVICE_NAME=ag-backend
+  OTEL_EXPORTER_OTLP_PROTOCOL=grpc
+  ```
+
+- Do **not** modify user shell profiles (`.bashrc`, etc.). Use systemd `EnvironmentFile` and user services with `loginctl enable-linger` instead.
+
+---
+
+Phase 16 (OTLP modules + collector integration) is therefore **functionally complete** for:
+
+- Request-level spans via middleware
+- OTLP export from backend to collector
+- Collector forwarding to Tempo
+- Systemd-managed services for both backend and collector
+
+Further enhancements (e.g., HTTP client spans, W3C/B3 propagation across services) remain available as future work.
 

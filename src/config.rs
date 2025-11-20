@@ -32,7 +32,11 @@ pub struct ApiConfig {
 
 impl ApiConfig {
     pub fn from_env() -> Self {
-        dotenvy::dotenv().ok();
+        // Allow tests to opt out of dotenv to avoid env contamination
+        let no_dotenv = std::env::var("NO_DOTENV").map(|v| v.to_lowercase() == "true" || v == "1").unwrap_or(false);
+        if !no_dotenv {
+            dotenvy::dotenv().ok();
+        }
         
         // Network configuration
         let host = env::var("BACKEND_HOST")

@@ -7,8 +7,8 @@
 // Enables trace propagation, correlation IDs, and performance analysis
 
 use opentelemetry::trace::TraceError;
-use opentelemetry_jaeger as jaeger;
 use tracing_opentelemetry::OpenTelemetryLayer;
+use opentelemetry_otlp::WithExportConfig;
 
 use std::env;
 use uuid::Uuid;
@@ -80,11 +80,11 @@ impl DistributedTracingConfig {
         config
     }
 
-    /// Initialize OpenTelemetry with Jaeger exporter
+    /// Initialize OpenTelemetry with OTLP exporter
     ///
     /// # Returns
     /// OpenTelemetry layer for tracing subscriber, or None if disabled
-    pub fn init_tracer(&self) -> Result<Option<OpenTelemetryLayer<tracing_subscriber::Registry, opentelemetry::sdk::trace::Tracer>>, TraceError> {
+    pub fn init_tracer(&self) -> Result<Option<OpenTelemetryLayer<tracing_subscriber::Registry, opentelemetry_sdk::trace::Tracer>>, TraceError> {
         if !self.enabled {
             return Ok(None);
         }
@@ -101,14 +101,20 @@ impl DistributedTracingConfig {
         let (agent_host, agent_port) = self.parse_jaeger_endpoint();
         tracing::debug!(%agent_host, agent_port, "Jaeger agent target parsed");
         
-        let tracer = jaeger::new_agent_pipeline()
-            .with_service_name(self.service_name.clone())
+        // Build OTLP exporter (grpc) to env-specified endpoint or default
+        let endpoint = std::env::var("OTEL_EXPORTER_OTLP_ENDPOINT").unwrap_or_else(|_| "http://127.0.0.1:4317".into());
+        let exporter = opentelemetry_otlp::new_exporter()
+            .tonic()
+            .with_endpoint(endpoint);
+        let tracer = opentelemetry_otlp::new_pipeline()
+            .tracing()
+            .with_exporter(exporter)
             .install_simple()
             .map_err(|e| {
-                tracing::error!("Failed to initialize Jaeger agent tracer: {}", e);
+                tracing::error!("Failed to initialize OTLP tracer: {}", e);
                 TraceError::Other(Box::new(std::io::Error::new(
                     std::io::ErrorKind::Other,
-                    format!("Jaeger agent initialization failed: {}", e),
+                    format!("OTLP initialization failed: {}", e),
                 )))
             })?;
 

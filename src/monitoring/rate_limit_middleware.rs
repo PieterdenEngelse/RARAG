@@ -120,30 +120,30 @@ impl RateLimitOptions {
                     // Try JSON first
                     let (rules, exempt) = parse_json(&text);
 
-                // If not JSON and looks like YAML, try YAML (if feature enabled)
-                if rules.is_none() && (path.ends_with(".yml") || path.ends_with(".yaml")) {
-                    #[cfg(feature = "rl_yaml")]
-                    {
-                        match serde_yaml::from_str::<Vec<RouteRule>>(&text) {
-                            Ok(rs) => rules = Some(rs),
-                            Err(_) => {
-                                // Try object form
-                                #[derive(Deserialize)]
-                                struct YamlFile { routes: Option<Vec<RouteRule>>, exempt_prefixes: Option<Vec<String>> }
-                                if let Ok(cfg) = serde_yaml::from_str::<YamlFile>(&text) {
-                                    rules = cfg.routes;
-                                    exempt = cfg.exempt_prefixes;
-                                } else {
-                                    warn!(file = %path, "Failed to parse YAML routes file");
+                    // If not JSON and looks like YAML, try YAML (if feature enabled)
+                    if rules.is_none() && (path.ends_with(".yml") || path.ends_with(".yaml")) {
+                        #[cfg(feature = "rl_yaml")]
+                        {
+                            match serde_yaml::from_str::<Vec<RouteRule>>(&text) {
+                                Ok(rs) => rules = Some(rs),
+                                Err(_) => {
+                                    // Try object form
+                                    #[derive(Deserialize)]
+                                    struct YamlFile { routes: Option<Vec<RouteRule>>, exempt_prefixes: Option<Vec<String>> }
+                                    if let Ok(cfg) = serde_yaml::from_str::<YamlFile>(&text) {
+                                        rules = cfg.routes;
+                                        exempt = cfg.exempt_prefixes;
+                                    } else {
+                                        warn!(file = %path, "Failed to parse YAML routes file");
+                                    }
                                 }
                             }
                         }
+                        #[cfg(not(feature = "rl_yaml"))]
+                        {
+                            warn!(file = %path, "YAML provided but 'rl_yaml' feature is not enabled. Rebuild with YAML support or provide JSON.");
+                        }
                     }
-                    #[cfg(not(feature = "rl_yaml"))]
-                    {
-                        warn!(file = %path, "YAML provided but 'rl_yaml' feature is not enabled. Rebuild with YAML support or provide JSON.");
-                    }
-                }
 
                     if let Some(rules) = rules { self.rules = rules; }
                     if let Some(ex) = exempt { self.exempt_prefixes = ex; }
@@ -257,8 +257,14 @@ where
         let client_ip = extract_client_ip(&req, self.opts.trust_proxy);
 
         if let Some((qps, burst, route_label)) = self.opts.for_request(&req) {
+            // Optional debug logging for tests
+            if std::env::var("RATE_LIMIT_DEBUG_LOG").map(|v| v.to_lowercase() == "true" || v == "1").unwrap_or(false) {
+                tracing::info!(client_ip=%client_ip, route=%route_label, qps=%qps, burst=%burst, "rate_limit_check");
+            }
+            // Build per-route+IP key to isolate budgets
+            let key = format!("{}::{}", client_ip, route_label);
             // Check rate limit using per-route policy
-            let (allowed, retry_after) = self.rate_limiter.check_key(&client_ip, qps, burst);
+            let (allowed, retry_after) = self.rate_limiter.check_key(&key, qps, burst);
             if !allowed {
                 tracing::warn!(
                     route = %route_label,
@@ -313,7 +319,6 @@ mod tests {
         assert!(trust_proxy == false);
     }
 
-
     #[test]
     fn test_middleware_creation() {
         let config = crate::security::rate_limiter::RateLimiterConfig {
@@ -323,7 +328,15 @@ mod tests {
             max_ips: 100,
         };
         let limiter = std::sync::Arc::new(crate::security::rate_limiter::RateLimiter::new(config));
-        let opts = RateLimitOptions { trust_proxy: true, search_qps: 5.0, search_burst: 10.0, upload_qps: 2.0, upload_burst: 5.0 };
+        let opts = RateLimitOptions { 
+            trust_proxy: true, 
+            search_qps: 5.0, 
+            search_burst: 10.0, 
+            upload_qps: 2.0, 
+            upload_burst: 5.0,
+            exempt_prefixes: vec![],
+            rules: vec![],
+        };
         let _middleware = RateLimitMiddleware::new_with_options(limiter, opts);
         // Middleware created successfully
     }

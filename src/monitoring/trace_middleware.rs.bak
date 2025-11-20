@@ -4,7 +4,6 @@ use std::time::Instant;
 use actix_service::{Service, Transform};
 use actix_web::{dev::{ServiceRequest, ServiceResponse}, Error, http::header};
 use tracing::{info_span, Instrument};
-use opentelemetry::{global, trace::{Tracer, Status, Span}};
 use crate::monitoring::metrics::REQUEST_LATENCY_MS;
 
 pub struct TraceMiddleware;
@@ -50,72 +49,30 @@ where
 
     fn call(&self, req: ServiceRequest) -> <Self as Service<ServiceRequest>>::Future {
         let method = req.method().to_string();
+        // Normalize route label: use matched resource pattern/name when available to avoid high cardinality
         let route_label = req.match_pattern().unwrap_or_else(|| req.path().to_string());
-        let user_agent = req.headers()
-            .get(header::USER_AGENT)
-            .and_then(|v| v.to_str().ok())
-            .unwrap_or("")
-            .to_string();
+        let user_agent = req.headers().get(header::USER_AGENT).and_then(|v| v.to_str().ok()).unwrap_or("").to_string();
         let request_id = uuid::Uuid::new_v4().to_string();
-        let client_ip = req.connection_info()
-            .realip_remote_addr()
-            .unwrap_or("unknown")
-            .to_string();
 
-        let span = info_span!(
-            "http_request",
-            method = %method,
-            path = %route_label,
-            client_ip = %client_ip,
-            request_id = %request_id,
-            user_agent = %user_agent
-        );
+        // Try to capture client IP from connection info; middleware runs before our helper
+        let client_ip = req.connection_info().realip_remote_addr().unwrap_or("unknown").to_string();
 
-        let tracer = global::tracer("ag-backend");
-        let span_name = format!("{} {}", method, route_label);
-        let mut otel_span = tracer.start(span_name);
-        otel_span.set_attribute(opentelemetry::KeyValue::new("http.method", method.clone()));
-        otel_span.set_attribute(opentelemetry::KeyValue::new("http.url", route_label.clone()));
-        otel_span.set_attribute(opentelemetry::KeyValue::new("http.client_ip", client_ip.clone()));
-        otel_span.set_attribute(opentelemetry::KeyValue::new("http.request_id", request_id.clone()));
-        otel_span.set_attribute(opentelemetry::KeyValue::new("http.user_agent", user_agent.clone()));
-
+        let span = info_span!("http_request", method = %method, path = %route_label, client_ip = %client_ip, request_id = %request_id, user_agent = %user_agent);
         let start = Instant::now();
         let fut = self.service.call(req);
 
         Box::pin(async move {
             let res = fut.instrument(span).await;
-            
             if let Ok(ref response) = res {
                 let status = response.status().as_u16();
                 let duration_ms = start.elapsed().as_millis() as u64;
                 let status_class = format!("{}xx", status / 100);
-
-                if status >= 400 {
-                    otel_span.set_status(Status::Error { description: format!("HTTP {}", status).into() });
-                } else {
-                    otel_span.set_status(Status::Ok);
-                }
-
-                otel_span.set_attribute(opentelemetry::KeyValue::new("http.status_code", status as i64));
-                otel_span.set_attribute(opentelemetry::KeyValue::new("http.duration_ms", duration_ms as i64));
-
+                // Record to Prometheus histogram
                 REQUEST_LATENCY_MS
                     .with_label_values(&[&method, &route_label, &status_class])
                     .observe(duration_ms as f64);
-
-                tracing::info!(
-                    method = %method,
-                    path = %route_label,
-                    status = status,
-                    duration_ms = duration_ms,
-                    request_id = %request_id,
-                    "request completed"
-                );
-            } else {
-                otel_span.set_status(Status::Error { description: "Request failed".into() });
+                tracing::info!(method = %method, path = %route_label, status = status, duration_ms = duration_ms, request_id = %request_id, "request completed");
             }
-            
             res
         })
     }

@@ -211,6 +211,29 @@ cargo run
 
 ## Monitoring
 
+### Quick Prometheus scrape config (drop-in)
+
+Add this snippet to your prometheus.yml to scrape the backend metrics endpoint:
+
+```
+scrape_configs:
+  - job_name: 'ag'
+    scrape_interval: 15s
+    metrics_path: /monitoring/metrics
+    static_configs:
+      - targets: ['localhost:3010']  # adjust host:port if different
+    relabel_configs:
+      - target_label: 'service'
+        replacement: 'ag'
+      - target_label: 'env'
+        replacement: 'dev'
+```
+
+Notes:
+- Ensure the app is reachable at the target and exposes /monitoring/metrics.
+- Change env to staging/prod as appropriate, or inject labels at the app/Prometheus level.
+- If scraping remotely, replace localhost with the server’s address.
+
 ### Prometheus Scrape Example
 
 Add this to your Prometheus configuration (prometheus.yml) to scrape the backend metrics:

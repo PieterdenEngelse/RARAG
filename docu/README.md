@@ -16,7 +16,11 @@ RUST_LOG=info,tantivy=warn cargo run
 ## Metrics and Prometheus
 
 - Metrics endpoint: GET /monitoring/metrics (Prometheus text format)
-- Includes app_info{app="ag",version="<pkg_version>"} and request/search/reindex metrics
+- Includes app_info with build metadata and labels and request/search/reindex metrics, for example:
+  - app_info{app="ag",service="ag",env="dev",version="<pkg_version>",git_sha="<short>",build_time="<rfc3339>"} 1
+- Override default labels at runtime:
+  - APP_SERVICE (default: ag)
+  - APP_ENV (default: dev)
 
 ### Metrics Histogram Buckets (Optional)
 

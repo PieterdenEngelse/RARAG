@@ -35,6 +35,13 @@ async fn main() -> std::io::Result<()> {
         .expect("Failed to initialize tracing");
     
     info!("🚀 Starting agentic-rag v{}", env!("CARGO_PKG_VERSION"));
+
+
+    // Initialize OpenTelemetry for distributed tracing (Phase 16)
+    let otel_config = ag::monitoring::otel_config::OtelConfig::from_env();
+    let _otel_guard = ag::monitoring::otel_config::init_otel(&otel_config)
+        .expect("Failed to initialize OpenTelemetry");
+    info!("🔍 OpenTelemetry initialized");
     debug!("Monitoring enabled: {}", monitoring_config.enabled);
     
     // ─────────────────────────────────────────────────────────────

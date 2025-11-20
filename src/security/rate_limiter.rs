@@ -1,7 +1,7 @@
 use std::net::IpAddr;
 use std::num::NonZeroUsize;
 use std::sync::Mutex;
-use std::time::Instant;
+use std::time::{Instant, Duration};
 use lru::LruCache;
 
 #[derive(Clone, Debug)]
@@ -54,18 +54,47 @@ impl RateLimiter {
         if !self.config.enabled {
             return (true, 0);
         }
-        if qps <= 0.0 || burst <= 0.0 {
+        if burst <= 0.0 {
             return (false, 1);
         }
 
         let now = Instant::now();
         let mut map = self.buckets.lock().expect("rate limiter mutex poisoned");
 
+        // Test-only optional discrete refill mode controlled via env var
+        // RATE_LIMIT_DISCRETE_REFILL=true enables discrete refill using interval RATE_LIMIT_REFILL_INTERVAL_MS (default 1000ms)
+        let discrete = std::env::var("RATE_LIMIT_DISCRETE_REFILL")
+            .map(|v| v.to_lowercase() == "true" || v == "1").unwrap_or(false);
+        let interval_ms: u64 = std::env::var("RATE_LIMIT_REFILL_INTERVAL_MS")
+            .ok().and_then(|v| v.parse().ok()).unwrap_or(1000);
+
         if let Some(bucket) = map.get_mut(key) {
-            // Refill tokens by elapsed time
-            let elapsed = now.duration_since(bucket.last_refill).as_secs_f64();
-            bucket.tokens = (bucket.tokens + elapsed * qps).min(burst);
-            bucket.last_refill = now;
+            if qps <= 0.0 {
+                // No refill when qps<=0; allow only while tokens remain
+                if bucket.tokens >= 1.0 {
+                    bucket.tokens -= 1.0;
+                    return (true, 0);
+                } else {
+                    return (false, 1);
+                }
+            }
+            // Refill tokens
+            if discrete {
+                // Add whole tokens per complete intervals elapsed
+                let elapsed = now.duration_since(bucket.last_refill);
+                let intervals = (elapsed.as_millis() as u64) / interval_ms.max(1);
+                if intervals > 0 {
+                    let add = (intervals as f64) * qps;
+                    bucket.tokens = (bucket.tokens + add).min(burst);
+                    // advance last_refill by full intervals
+                    let advance = Duration::from_millis(intervals * interval_ms);
+                    bucket.last_refill += advance;
+                }
+            } else {
+                let elapsed = now.duration_since(bucket.last_refill).as_secs_f64();
+                bucket.tokens = (bucket.tokens + elapsed * qps).min(burst);
+                bucket.last_refill = now;
+            }
 
             if bucket.tokens >= 1.0 {
                 bucket.tokens -= 1.0;
@@ -96,16 +125,40 @@ impl RateLimiter {
         let now = Instant::now();
         let mut map = self.buckets.lock().expect("rate limiter mutex poisoned");
 
+        // Mirror discrete refill logic for retry-after calculation
+        let discrete = std::env::var("RATE_LIMIT_DISCRETE_REFILL")
+            .map(|v| v.to_lowercase() == "true" || v == "1").unwrap_or(false);
+        let interval_ms: u64 = std::env::var("RATE_LIMIT_REFILL_INTERVAL_MS")
+            .ok().and_then(|v| v.parse().ok()).unwrap_or(1000);
+
         if let Some(bucket) = map.get_mut(key) {
-            let elapsed = now.duration_since(bucket.last_refill).as_secs_f64();
-            bucket.tokens = (bucket.tokens + elapsed * qps).min(self.config.burst.max(0.0));
-            bucket.last_refill = now;
+            if discrete {
+                let elapsed = now.duration_since(bucket.last_refill);
+                let intervals = (elapsed.as_millis() as u64) / interval_ms.max(1);
+                if intervals > 0 {
+                    let add = (intervals as f64) * qps;
+                    bucket.tokens = (bucket.tokens + add).min(self.config.burst.max(0.0));
+                    let advance = Duration::from_millis(intervals * interval_ms);
+                    bucket.last_refill += advance;
+                }
+            } else {
+                let elapsed = now.duration_since(bucket.last_refill).as_secs_f64();
+                bucket.tokens = (bucket.tokens + elapsed * qps).min(self.config.burst.max(0.0));
+                bucket.last_refill = now;
+            }
 
             if bucket.tokens >= 1.0 {
                 0
             } else {
-                let needed = 1.0 - bucket.tokens;
-                (needed / qps).ceil() as u64
+                if discrete {
+                    // compute number of full intervals to reach >=1 token
+                    let needed = 1.0 - bucket.tokens;
+                    let intervals_needed = (needed / qps).ceil().max(1.0) as u64;
+                    intervals_needed * interval_ms / 1000 // seconds
+                } else {
+                    let needed = 1.0 - bucket.tokens;
+                    (needed / qps).ceil() as u64
+                }
             }
         } else {
             1

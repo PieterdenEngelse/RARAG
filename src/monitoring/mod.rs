@@ -25,7 +25,7 @@ pub mod distributed_tracing;
 pub mod trace_middleware;
 pub mod performance_analysis;
 pub mod rate_limit_middleware;
-
+pub mod otel_config;
 
 
 pub use config::MonitoringConfig;

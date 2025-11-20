@@ -1555,3 +1555,128 @@ tracing-opentelemetry = "0.21"
 **Last Updated**: 2025-11-09  
 **Author**: Development Team  
 **Status**: ✅ Complete
+
+Bottom line for ag installer:
+Use loginctl enable-linger + systemctl --user enable. Don't edit shell files at all.
+
+---
+
+## Phase 16 – Distributed Tracing (Installer Notes)
+
+Phase 16 tracing is now **implemented and verified** end-to-end:
+
+- Backend emits spans via OpenTelemetry middleware (`TraceMiddleware`).
+- Spans are exported via OTLP/gRPC to a local OTel Collector.
+- Collector forwards traces to Grafana Tempo.
+- Grafana Tempo datasource shows `ag-backend` as a service.
+
+### Backend configuration (env file)
+
+Installers should configure tracing via the backend `EnvironmentFile` only:
+
+- User service env: `~/.config/ag/ag.env`
+- System-wide env: `/etc/default/ag` (Debian/Ubuntu) or `/etc/sysconfig/ag` (RHEL)
+
+Minimal block to enable tracing via local collector:
+
+```bash
+# Enable tracing
+OTEL_TRACES_ENABLED=true
+
+# Export to collector via OTLP/gRPC
+OTEL_OTLP_EXPORT=true
+OTEL_CONSOLE_EXPORT=false
+OTEL_EXPORTER_OTLP_ENDPOINT=http://127.0.0.1:4318
+OTEL_EXPORTER_OTLP_PROTOCOL=grpc
+
+# Service identity (shown in Tempo)
+OTEL_SERVICE_NAME=ag-backend
+```
+
+Notes:
+
+- Do **not** put OTEL_* vars into shell profiles (`.bashrc`, etc.). Use the systemd `EnvironmentFile` only.
+- `OTEL_CONSOLE_EXPORT=true` is useful for debugging (JSON spans in `ag` logs) but noisy for production.
+
+### Collector configuration (user service)
+
+When using the provided `install_otelcol.sh` in user mode:
+
+- Unit: `~/.config/systemd/user/otelcol.service`
+- Config: `~/.config/otelcol/config.yaml`
+
+Example config (current default):
+
+```yaml
+receivers:
+  otlp:
+    protocols:
+      grpc:
+        endpoint: 127.0.0.1:4318
+      http:
+        endpoint: 127.0.0.1:4319
+
+processors:
+  batch:
+    send_batch_size: 512
+    timeout: 5s
+  tail_sampling:
+    decision_wait: 2s
+    policies:
+      - name: errors
+        type: status_code
+        status_code:
+          status_codes: [ERROR]
+      - name: slow
+        type: latency
+        latency:
+          threshold_ms: 500
+      - name: sample_some
+        type: probabilistic
+        probabilistic:
+          sampling_percentage: 10
+
+exporters:
+  otlp/tempo:
+    endpoint: 127.0.0.1:4317
+    tls:
+      insecure: true
+
+service:
+  pipelines:
+    traces:
+      receivers: [otlp]
+      processors: [tail_sampling, batch]
+      exporters: [otlp/tempo]
+```
+
+Installer notes:
+
+- Ensure Tempo is reachable at `127.0.0.1:4317` (or adjust `otlp/tempo.endpoint` accordingly).
+- The collector’s gRPC OTLP receiver must match `OTEL_EXPORTER_OTLP_ENDPOINT` in `ag.env`.
+- No changes to app code are required; only env + collector config.
+
+### Recommended verification steps
+
+After install, an installer or operator can verify Phase 16 with:
+
+1. Start collector (user mode):
+   ```bash
+   systemctl --user enable --now otelcol.service
+   ```
+2. Restart backend with OTEL env set:
+   ```bash
+   sudo systemctl restart ag.service
+   ```
+3. Generate traffic:
+   ```bash
+   curl -s http://127.0.0.1:3010/monitoring/health > /dev/null
+   curl -s "http://127.0.0.1:3010/search?q=test" > /dev/null
+   ```
+4. Check Tempo via Grafana Tempo datasource for service `ag-backend`.
+
+If traces are missing:
+
+- Confirm collector logs show a gRPC OTLP receiver on the expected port.
+- Double-check `OTEL_EXPORTER_OTLP_ENDPOINT` and `otlp` receiver endpoint match.
+- Temporarily set `OTEL_CONSOLE_EXPORT=true` to see spans emitted in backend logs for debugging.

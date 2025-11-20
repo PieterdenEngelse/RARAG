@@ -17,8 +17,8 @@ pub fn init_tracing() {
 
     #[cfg(feature = "otel")] // guard if you later add a feature flag
     let otlp_layer = {
-        use opentelemetry::sdk::export::trace::SpanExporter;
-        use opentelemetry::sdk::trace as sdktrace;
+        use opentelemetry_sdk::export::trace::SpanExporter;
+        use opentelemetry_sdk::trace as sdktrace;
         use opentelemetry_otlp::WithExportConfig;
 
         if let Some(endpoint) = otlp_endpoint.clone() {
@@ -40,7 +40,7 @@ pub fn init_tracing() {
     #[cfg(not(feature = "otel"))]
     let otlp_layer: Option<tracing_opentelemetry::OpenTelemetryLayer<
         tracing_subscriber::Registry,
-        opentelemetry::sdk::trace::Tracer,
+        opentelemetry_sdk::trace::Tracer,
     >> = None;
 
     let subscriber = tracing_subscriber::registry()

@@ -1,15 +1,18 @@
 # Repository Guidelines
 
-i dont use docker.
-
 ## Project Structure & Module Organization
 
-- Root Rust backend: ./src (Actix Web services, monitoring, retriever, config) with Cargo.toml defining dependencies and features. Supporting docs: README.md, INSTALLER.md, PLAN.md.
-- Frontend (Dioxus/Tailwind): ./frontend/fro with Rust UI (src/), Dioxus.toml, Tailwind config, and Node-based tooling (package.json) plus assets/ and public/.
-- Tests: ./tests for Rust unit/integration tests (see PLAN/INSTALLER notes and crate layout).
-- Ops and scripts: ./install.sh (cross-platform installer entry), ./scripts (utility scripts), ops assets referenced in INSTALLER.md (systemd/windows) may live under ops/ when present.
-- Data/runtime folders: ./data, ./db, ./cache, ./logs, tantivy_index (local artifacts), and target/ (build outputs).
-- Qodo workspace: ./.qodo/{agents,workflows} for automation.
+- Backend (Rust): ./src – Actix Web API, retriever, indexing, monitoring, security, cache, etc. Key modules:
+  - src/api (HTTP routes and handlers)
+  - src/retriever.rs, src/index.rs, src/embedder.rs
+  - src/monitoring (metrics, tracing, rate limiting middleware)
+  - src/cache (L2 memory cache, Redis L3 cache)
+  - src/config.rs, src/path_manager.rs
+  - src/db/schema_init.rs (database bootstrapping)
+- Frontend (Dioxus/Tailwind): ./frontend/fro with Rust UI in src/, Dioxus.toml, Tailwind config, and Node scripts.
+- Tests: ./tests (integration, monitoring, rate-limit, cache tests).
+- Runtime/data: ./documents (uploads), ./tantivy_index, ./data, ./db, ./cache, ./logs.
+- Scripts and installers: ./install.sh, ./installers/, ./scripts/.
 
 ## Build, Test, and Development Commands
 
@@ -17,41 +20,41 @@ i dont use docker.
 # Backend: run (dev)
 cargo run
 
-# Backend: run with profiling stubs enabled
-cargo run --features profiling
-
 # Backend: build release
 cargo build --release
 
-# Backend: tests
+# Backend: run tests
 cargo test
 
-# Frontend (Dioxus): serve for web
-cd frontend/fro && dx serve --platform web
+# Frontend: build CSS once
+cd frontend/fro && npm run css:build
 
-# Tailwind (if needed for CSS generation)
-cd frontend/fro && npx tailwindcss -i ./assets/styling/input.css -o ./public/styles.css --watch
+# Frontend: watch CSS during dev
+cd frontend/fro && npm run css:watch
+
+# Frontend: serve Dioxus app (requires dx CLI)
+cd frontend/fro && dx serve --platform web
 ```
 
 ## Coding Style & Naming Conventions
 
-- Indentation: 4 spaces for Rust and JS/TS files unless project-specific formatting is applied.
-- File naming: Rust modules use snake_case (e.g., src/api/mod.rs, src/retriever.rs); JS config files in frontend/fro use kebab/camel as per ecosystem (tailwind.config.js).
-- Functions/variables: snake_case for Rust, UpperCamelCase for types/structs, SCREAMING_SNAKE_CASE for consts; in JS config, camelCase.
-- Linting/formatting: Use rustfmt and clippy where available. Frontend adheres to Tailwind and Dioxus conventions; no explicit ESLint/Prettier configs detected.
+- Indentation: 4 spaces (Rust and JS).
+- Rust style: modules and files in snake_case (e.g., src/path_manager.rs), types in UpperCamelCase, functions/variables in snake_case, consts in SCREAMING_SNAKE_CASE.
+- Frontend config uses common JS conventions (camelCase identifiers; see tailwind.config.js).
+- Lint/format: rustfmt and clippy recommended; no explicit config files present. Follow Actix/Dioxus idioms.
 
 ## Testing Guidelines
 
-- Framework: Rust’s built-in test framework (cargo test). Some modules include integration tests under ./tests (see PLAN.md and INSTALLER.md references to test commands).
-- Test files: Rust unit tests live alongside modules with #[cfg(test)], integration tests under tests/ directory.
-- Running tests: cargo test
-- Coverage: No explicit coverage thresholds configured in the repo.
+- Framework: Rust built-in test framework (cargo test).
+- Locations: integration/system tests in ./tests (e.g., retriever_tests.rs, rate_limit_middleware_integration_test.rs). Unit tests may appear alongside modules with #[cfg(test)].
+- Run: cargo test
+- Coverage: No explicit coverage tooling or thresholds configured.
 
 ## Commit & Pull Request Guidelines
 
-- Commit format: Conventional commits not enforced; use clear, imperative messages. Examples from docs indicate versioned changes like "config.rs v2.0.0" and feature flags; include scope and impact (e.g., "feat: add rate limiting with metrics").
-- PR process: Open PR with description of changes, include build/test results and any feature flags used. Ensure docs (README.md/INSTALLER.md/this AGENTS.md) are updated when behavior changes.
-- Branch naming: Feature branches observed under refs/heads/feature/...; use feature/<short-name>.
+- Commit format: Not enforced; write clear, imperative messages describing the why and what. Reference modules when relevant (e.g., monitoring: add Prometheus endpoint).
+- PR process: Include rationale, test results (cargo test), and any env or config changes affecting monitoring/rate limits. Update AGENTS.md when altering APIs or structure.
+- Branches: Feature branches under feature/<short-name> are present in git refs; use descriptive names.
 
 ---
 
@@ -59,12 +62,12 @@ cd frontend/fro && npx tailwindcss -i ./assets/styling/input.css -o ./public/sty
 
 ## 🎯 What This Repository Does
 
-ag (Agentic RAG) is a Rust-based Retrieval-Augmented Generation system with an Actix Web backend and a Dioxus (WASM) frontend, providing search, indexing, and monitoring endpoints.
+ag is a Rust-based Agentic RAG service that exposes an Actix Web API for document upload, indexing, search, simple rerank/summarize, and monitoring; it includes a Dioxus + Tailwind frontend.
 
 Key responsibilities:
-- Serve API endpoints for search, indexing, uploads, and monitoring
-- Manage vector/text indices (tantivy) and persistence (rusqlite)
-- Provide a Dioxus web UI with Tailwind styling
+- Index and search text/PDF files using Tantivy and simple embeddings
+- Serve HTTP endpoints for upload, search, reindex (sync/async), agent memory
+- Expose metrics and tracing for observability; optional Redis cache layer
 
 ---
 
@@ -72,22 +75,24 @@ Key responsibilities:
 
 ### System Context
 ```
-[Browser / Client] → [Actix Web backend (ag)] → [Rusqlite/Tantivy storage]
+[Browser / Client] → [Actix Web backend (ag)] → [Rusqlite/Tantivy on disk]
                              ↓
-                    [Dioxus Web Frontend]
+                     [Dioxus Web Frontend]
 ```
 
 ### Key Components
-- Backend (./src): Actix Web app exposing routes like /search, /upload, /monitoring/* with tracing and metrics.
-- Indexing/Retriever: Tantivy-based indexing/search with configurable writer heap; supports async reindex and rate limiting as documented.
-- Monitoring: Prometheus metrics and OpenTelemetry tracing (Jaeger integration), plus health/ready/live endpoints.
-- Frontend (./frontend/fro): Dioxus 0.6 app compiled to web, Tailwind v4-based styling.
+- HTTP API (src/api): Upload, reindex (sync/async), search, memory, agent endpoints; global retriever handle.
+- Retriever/Indexing (src/retriever.rs, src/index.rs): Tantivy index, vector storage JSON, hybrid utilities, atomic reindex.
+- Monitoring (src/monitoring): metrics export (/monitoring/metrics), health/ready, OpenTelemetry setup, rate limit middleware.
+- Caching (src/cache): L2 in-memory cache and optional L3 Redis cache.
+- Config/Paths (src/config.rs, src/path_manager.rs): env-driven server, rate limits, and managed data/index paths.
+- Frontend (frontend/fro): Dioxus app; Tailwind for styling and asset pipeline.
 
 ### Data Flow
-1. Client calls API endpoints on Actix Web (e.g., /search or /upload).
-2. Middleware adds tracing, rate-limiting, and metrics; handlers validate and process.
-3. Indexing/retrieval uses Tantivy and Rusqlite for data access and search.
-4. Responses are serialized via serde and returned; metrics exposed at /monitoring/metrics.
+1. Client uploads files to /upload; files stored under ./documents.
+2. Reindex is triggered (background at startup unless SKIP_INITIAL_INDEXING=true, or via /reindex or /reindex/async).
+3. src/index.rs parses supported files (txt/pdf placeholder), chunks lines, embeds, and writes to Tantivy + vectors.json.
+4. /search queries Tantivy; optional caches (L2/L3) and metrics are updated; response returned as JSON.
 
 ---
 
@@ -95,121 +100,140 @@ Key responsibilities:
 
 ```
 ./
-├── Cargo.toml                 # Rust workspace crate for backend
-├── README.md                  # Logging presets and profiling notes
-├── INSTALLER.md               # Cross-platform installation & ops
-├── install.sh                 # Installer entry (bash)
-├── src/                       # Backend source (Actix, monitoring, retriever, config)
-├── tests/                     # Rust integration tests
+├── Cargo.toml
+├── src/
+│   ├── api/                      # Actix routes, handlers, async reindex jobs
+│   ├── cache/                    # L2 memory cache + Redis L3 cache
+│   ├── monitoring/               # Metrics, OpenTelemetry, rate limit middleware
+│   ├── db/schema_init.rs         # DB schema bootstrap (rusqlite)
+│   ├── config.rs                 # ApiConfig from env
+│   ├── retriever.rs              # Tantivy index + vector storage and metrics
+│   ├── index.rs                  # Indexing pipeline over ./documents
+│   ├── path_manager.rs           # Paths for data/index/vector files
+│   └── lib.rs                    # Module declarations
+├── tests/                        # Integration and monitoring tests
 ├── frontend/
 │   └── fro/
-│       ├── Cargo.toml         # Dioxus app dependencies
-│       ├── Dioxus.toml        # Dioxus web app config
-│       ├── package.json       # Tailwind tooling
-│       ├── tailwind.config.js # Tailwind config (dark mode class)
-│       └── src/               # Dioxus UI components/views
-├── data/ db/ cache/ logs/     # Runtime data folders
-├── target/                    # Build artifacts (Rust)
-└── .qodo/agents,workflows     # Qodo automation
+│       ├── Dioxus.toml
+│       ├── package.json          # Tailwind scripts (css:build, css:watch)
+│       ├── tailwind.config.js
+│       └── src/                  # Dioxus components/pages
+├── documents/                    # Uploads (runtime)
+├── tantivy_index/                # Local Tantivy index (runtime)
+├── data/ db/ cache/ logs/        # Runtime data and logs
+└── install.sh installers/ scripts/
 ```
 
 ### Key Files to Know
 
 | File | Purpose | When You'd Touch It |
 |------|---------|---------------------|
-| Cargo.toml | Backend dependencies, features (installer, profiling, full) | Add/change backend deps or features |
-| src/main.rs (and src/api/mod.rs) | Backend entry and API routes | Add endpoints or middleware |
-| src/monitoring/* | Metrics, tracing, health endpoints | Modify observability behavior |
-| frontend/fro/Cargo.toml | Dioxus UI dependencies | Add UI libraries |
-| frontend/fro/Dioxus.toml | Frontend app config | Change web build settings |
-| frontend/fro/package.json | Node tooling (Tailwind) | Adjust scripts/tooling |
-| frontend/fro/tailwind.config.js | Tailwind scanning/config | Extend styling/theme |
-| install.sh | Installer flow and env | Change install behavior/paths |
-| README.md | Logging presets and profiling flags | Update dev/ops guidance |
-| INSTALLER.md | End-to-end install and ops docs | Update deployment details |
+| src/main.rs | Backend entrypoint; sets up tracing, OTEL, DB, retriever; starts Actix server | Change startup behavior, background indexing, telemetry |
+| src/api/mod.rs | HTTP routes for health/ready, upload, search, reindex (sync/async), memory, agent | Add endpoints or adjust rate limits/CORS |
+| src/retriever.rs | Core search/index and vector store logic; metrics; caches; atomic reindex | Modify search behavior, vector IO, caching |
+| src/index.rs | Iterates files in ./documents, extracts text, chunks, embeds, commits | Extend file types, chunking, embeddings |
+| src/monitoring/metrics.rs | Prometheus metrics registry and exporters | Add/edit metrics |
+| src/monitoring/rate_limit_middleware.rs | Middleware with per-route rules and labels | Tune rate limits and exempt routes |
+| src/config.rs | ApiConfig from env (ports, rate limits, Redis) | Introduce new env flags or defaults |
+| frontend/fro/package.json | Tailwind CSS scripts | Update CSS build/watch scripts |
+| frontend/fro/Dioxus.toml | Dioxus web config and watcher | Adjust dev file watching |
+| frontend/fro/tailwind.config.js | Tailwind scanning paths, dark mode | Add content paths and theme |
 
 ---
 
 ## 🔧 Technology Stack
 
 ### Core Technologies
-- Language: Rust (edition 2021) from Cargo.toml
-- Backend Framework: Actix Web 4.x
-- Frontend Framework: Dioxus 0.6 (web, router)
-- Search/Index: Tantivy 0.24
-- Database/Storage: rusqlite 0.37, filesystem paths managed via env
-- Async: Tokio 1.x, futures-util
-- Serialization: serde/serde_json (optional serde_yaml via feature)
-- Telemetry: tracing, opentelemetry (+jaeger), tracing-subscriber, Prometheus 0.13
+- Language: Rust (edition 2021)
+- Backend: Actix Web 4.x
+- Search/Index: Tantivy 0.24.x
+- Persistence: rusqlite 0.37 (SQLite)
+- Async runtime: Tokio 1.x
+- Telemetry: tracing, prometheus, OpenTelemetry 0.21 (+ OTLP via tonic)
+- Frontend: Dioxus (Rust) with Tailwind CSS 4.x CLI
 
 ### Key Libraries
-- llm (1.3.4) for LLM interactions
-- regex, rayon, lru for data processing and performance
-- actix-cors, actix-multipart, actix-service for HTTP stack
+- llm for model interactions (placeholder usage in codebase)
+- rayon and lru for performance and caching
+- reqwest (rustls) for HTTP client utilities
+- redis (optional) for L3 cache
 
 ### Development Tools
 - cargo (build/test)
-- dx (Dioxus CLI) for frontend serve/build
-- Tailwind CLI 4.x via Node in frontend/fro
+- dx (Dioxus CLI) for frontend serve
+- Tailwind CLI via npm scripts (frontend/fro)
 
 ---
 
 ## 🌐 External Dependencies
 
-- Optional Redis (redis 0.32 with async features) enabled by env as per INSTALLER and Cargo features.
-- Jaeger (optional) for tracing export when TRACING_ENABLED/JAEGER_* envs are set.
-- Prometheus scrapes /monitoring/metrics for metrics collection.
+- Prometheus (scrapes /monitoring/metrics)
+- Optional: Redis at REDIS_URL for L3 cache
+- Optional: OpenTelemetry collector via OTLP (see src/monitoring/* OTLP files)
 
 ### Environment Variables
 
-Common variables from README/INSTALLER:
-
 ```bash
-RUST_LOG=info,tantivy=warn
-SEARCH_HISTO_BUCKETS=1,2,5,10,20,50,100,250,500,1000
-REINDEX_HISTO_BUCKETS=50,100,250,500,1000,2000,5000,10000
-TRUST_PROXY=true|false
-# Installer-generated
-AG_HOME=~/.fro
+# Server
+BACKEND_HOST=127.0.0.1
 BACKEND_PORT=3010
-FRONTEND_PORT=3000
+
+# Indexing & startup
+SKIP_INITIAL_INDEXING=false
+INDEX_IN_RAM=false
+
+# Rate limiting
+RATE_LIMIT_ENABLED=false
+RATE_LIMIT_QPS=1.0
+RATE_LIMIT_BURST=5
+RATE_LIMIT_SEARCH_QPS=
+RATE_LIMIT_SEARCH_BURST=
+RATE_LIMIT_UPLOAD_QPS=
+RATE_LIMIT_UPLOAD_BURST=
+RATE_LIMIT_LRU_CAPACITY=1024
+TRUST_PROXY=false
+
+# Redis (optional)
+REDIS_ENABLED=false
 REDIS_URL=redis://127.0.0.1:6379/
+REDIS_TTL=3600
 ```
 
 ---
 
 ## 🔄 Common Workflows
 
-### Local development (backend)
-1. Set logging preset (e.g., RUST_LOG=debug,tantivy=info)
+### Local backend development
+1. Set env vars as needed (e.g., RUST_LOG, BACKEND_PORT).
 2. cargo run
-3. Verify health endpoints at /monitoring/{health,ready,live}
+3. Hit http://127.0.0.1:3010/monitoring/health and /monitoring/metrics.
 
-### Frontend development
+### Index local documents
+1. Place .txt or .pdf files under ./documents
+2. POST /reindex or POST /reindex/async
+3. GET /index/info and /documents to verify
+
+### Frontend workflow
 1. cd frontend/fro
-2. dx serve --platform web
-3. Edit Dioxus components in src/ and Tailwind classes
-
-### Reindex and performance testing
-- Start backend, POST /reindex (async supported); compare segment file counts in index directory to validate reduction (see PLAN.md).
+2. npm run css:watch (Tailwind)
+3. dx serve --platform web
 
 ---
 
 ## 📈 Performance & Scale
 
-- Rate limiting: per-IP token-bucket with LRU; tunable via env, exposes labeled metrics.
-- Histogram buckets configurable via env; defaults used when unset or invalid.
-- INDEX_IN_RAM optional for small datasets to improve latency (see PLAN.md).
+- Batch indexing supported via begin_batch/end_batch to reduce commit overhead.
+- L1/L2/L3 caching layers reduce query latency; metrics include cache hit/miss and search latency histograms.
+- Histogram buckets configurable in monitoring code; Prometheus export is text format.
 
 ---
 
 ## 🚨 Things to Be Careful About
 
-### Security Considerations
-- TRUST_PROXY should only be true behind a trusted reverse proxy; otherwise use real remote addr.
-- Manage Redis and installer-generated .env securely; do not commit secrets.
-- Large uploads and reindex endpoints can be expensive; ensure proper rate limits and auth if added.
+### 🔒 Security Considerations
+- If TRUST_PROXY is false, remote IPs are taken from the socket; only enable behind trusted proxy.
+- Upload endpoint accepts only .txt and .pdf; enforce size and auth if exposing publicly.
+- Redis and any webhook URLs should be configured via env; avoid committing secrets.
 
 
-Updated at: 2025-11-05
-
+*Updated at: 2025-11-15*
