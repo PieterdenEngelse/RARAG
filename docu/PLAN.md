@@ -1835,3 +1835,506 @@ Phase 16 (OTLP modules + collector integration) is therefore **functionally comp
 
 Further enhancements (e.g., HTTP client spans, W3C/B3 propagation across services) remain available as future work.
 
+
+---
+
+# Phase 17 – Log Aggregation with Loki + Promtail (Completed)
+
+This section documents the implementation of centralized log aggregation using Grafana Loki and Promtail for the `ag` backend service.
+
+## 1) Overview
+
+Phase 17 adds log aggregation to complement the existing observability stack:
+
+- **Metrics**: Prometheus (Phase 15)
+- **Traces**: OpenTelemetry → Collector → Tempo (Phase 16)
+- **Logs**: Promtail → Loki → Grafana (Phase 17)
+
+This creates a complete observability triad for the `ag` backend.
+
+## 2) Components Installed
+
+### 2.1 Loki (Log Aggregation Backend)
+
+- **Binary**: `~/.local/bin/loki` (Loki 3.0.0)
+- **Config**: `~/.config/loki/config.yml`
+- **Service**: `~/.config/systemd/user/loki.service` (user service)
+- **Storage**: Filesystem-based (single-node)
+  - Index: `~/.local/share/loki/index`
+  - Cache: `~/.local/share/loki/cache`
+  - Chunks: `~/.local/share/loki/chunks`
+  - Compactor: `~/.local/share/loki/compactor`
+
+**Key Configuration**:
+
+```yaml
+auth_enabled: false
+server:
+  http_listen_port: 3100
+  grpc_listen_port: 0  # Disabled to avoid port conflicts
+
+schema_config:
+  configs:
+    - from: 2023-01-01
+      store: boltdb-shipper
+      object_store: filesystem
+      schema: v13
+      index:
+        prefix: index_
+        period: 24h
+
+storage_config:
+  boltdb_shipper:
+    active_index_directory: /home/pde/.local/share/loki/index
+    cache_location: /home/pde/.local/share/loki/cache
+  filesystem:
+    directory: /home/pde/.local/share/loki/chunks
+
+compactor:
+  working_directory: /home/pde/.local/share/loki/compactor
+
+limits_config:
+  retention_period: 168h  # 7 days
+  max_cache_freshness_per_query: 10m
+  allow_structured_metadata: false
+```
+
+**Service Management**:
+
+```bash
+# Start/stop/status
+systemctl --user start loki.service
+systemctl --user stop loki.service
+systemctl --user status loki.service
+
+# Enable auto-start
+systemctl --user enable loki.service
+
+# View logs
+journalctl --user -u loki.service -f
+```
+
+### 2.2 Promtail (Log Shipper)
+
+- **Binary**: `~/.local/bin/promtail` (Promtail 3.0.0)
+- **Config**: `~/.config/promtail/config.yml`
+- **Service**: `~/.config/systemd/user/promtail.service` (user service)
+- **Positions**: `~/.local/share/promtail/positions.yaml`
+
+**Key Configuration**:
+
+```yaml
+server:
+  http_listen_port: 9080
+  grpc_listen_port: 0
+
+positions:
+  filename: /home/pde/.local/share/promtail/positions.yaml
+
+clients:
+  - url: http://127.0.0.1:3100/loki/api/v1/push
+
+scrape_configs:
+  # Scrape systemd journal for ag.service
+  - job_name: systemd-journal
+    journal:
+      max_age: 12h
+      labels:
+        job: systemd-journal
+        host: localhost
+    relabel_configs:
+      # Only include ag.service logs
+      - source_labels: ['__journal__systemd_unit']
+        target_label: 'systemd_unit'
+      - source_labels: ['__journal__systemd_unit']
+        regex: 'ag.service'
+        action: keep
+      # Add other useful journal fields
+      - source_labels: ['__journal__hostname']
+        target_label: 'hostname'
+      - source_labels: ['__journal_priority']
+        target_label: 'priority'
+      - source_labels: ['__journal_syslog_identifier']
+        target_label: 'syslog_identifier'
+
+  # Scrape file logs from ~/.agentic-rag/logs/
+  - job_name: ag-file-logs
+    static_configs:
+      - targets:
+          - localhost
+        labels:
+          job: ag-file-logs
+          host: localhost
+          __path__: /home/pde/.agentic-rag/logs/*.log
+```
+
+**Service Management**:
+
+```bash
+# Start/stop/status
+systemctl --user start promtail.service
+systemctl --user stop promtail.service
+systemctl --user status promtail.service
+
+# Enable auto-start
+systemctl --user enable promtail.service
+
+# View logs
+journalctl --user -u promtail.service -f
+```
+
+## 3) Log Sources
+
+Promtail is configured to scrape logs from two sources:
+
+### 3.1 Systemd Journal (Primary)
+
+- **Source**: `journalctl -u ag.service`
+- **Labels**:
+  - `job="systemd-journal"`
+  - `systemd_unit="ag.service"`
+  - `hostname`, `priority`, `syslog_identifier`
+- **Advantages**:
+  - Real-time log streaming
+  - Includes all structured metadata from systemd
+  - No file rotation issues
+
+### 3.2 File Logs (Secondary)
+
+- **Source**: `~/.agentic-rag/logs/*.log`
+- **Labels**:
+  - `job="ag-file-logs"`
+  - `host="localhost"`
+- **Note**: Currently these files are empty (0 bytes) as the backend primarily logs to journald
+
+## 4) Verification
+
+### 4.1 Check Services
+
+```bash
+# Verify Loki is running
+systemctl --user status loki.service
+curl -s http://127.0.0.1:3100/ready
+
+# Verify Promtail is running
+systemctl --user status promtail.service
+
+# Verify ag.service is running and generating logs
+systemctl status ag.service
+journalctl -u ag.service -n 20
+```
+
+### 4.2 Query Loki API
+
+```bash
+# Query logs from ag.service
+curl -s -G "http://127.0.0.1:3100/loki/api/v1/query" \
+  --data-urlencode 'query={systemd_unit="ag.service"}' \
+  --data-urlencode 'limit=5' | jq
+
+# Check available labels
+curl -s "http://127.0.0.1:3100/loki/api/v1/labels" | jq
+
+# Check job label values
+curl -s "http://127.0.0.1:3100/loki/api/v1/label/job/values" | jq
+```
+
+**Expected Output**:
+
+- Labels: `host`, `hostname`, `job`, `priority`, `service_name`, `syslog_identifier`, `systemd_unit`
+- Jobs: `systemd-journal` (and `ag-file-logs` if file logs exist)
+- Log entries with structured data: `method`, `path`, `status`, `duration_ms`, `request_id`
+
+### 4.3 Grafana Integration
+
+**Add Loki Datasource**:
+
+1. Open Grafana (typically `http://localhost:3000`)
+2. Go to **Configuration** → **Data Sources**
+3. Click **Add data source**
+4. Select **Loki**
+5. Configure:
+   - **URL**: `http://127.0.0.1:3100`
+   - **Access**: Server (default)
+6. Click **Save & Test**
+
+**Query Logs in Explore**:
+
+```logql
+# All ag.service logs
+{systemd_unit="ag.service"}
+
+# Filter by log level (INFO, WARN, ERROR)
+{systemd_unit="ag.service"} |= "INFO"
+{systemd_unit="ag.service"} |= "ERROR"
+
+# Filter by endpoint
+{systemd_unit="ag.service"} |= "/monitoring/metrics"
+{systemd_unit="ag.service"} |= "/search"
+
+# Combine filters
+{systemd_unit="ag.service"} |= "ERROR" |= "request completed"
+
+# Rate of log lines
+rate({systemd_unit="ag.service"}[5m])
+
+# Count by log level
+sum by (priority) (count_over_time({systemd_unit="ag.service"}[5m]))
+```
+
+## 5) Architecture
+
+```
+┌─────────────────┐
+│   ag.service    │
+│  (Rust backend) │
+└────────┬────────┘
+         │
+         ├─────────────────────────────────┐
+         │                                 │
+         ▼                                 ▼
+  ┌─────────────┐                  ┌──────────────┐
+  │  journald   │                  │ File Logs    │
+  │  (systemd)  │                  │ ~/.agentic-  │
+  └──────┬──────┘                  │  rag/logs/   │
+         │                         └──────┬───────┘
+         │                                │
+         └────────────┬───────────────────┘
+                      │
+                      ▼
+              ┌───────────────┐
+              │   Promtail    │
+              │ (log shipper) │
+              └───────┬───────┘
+                      │
+                      ▼
+              ┌───────────────┐
+              │     Loki      │
+              │ (log storage) │
+              └───────┬───────┘
+                      │
+                      ▼
+              ┌───────────────┐
+              │    Grafana    │
+              │  (UI/Query)   │
+              └───────────────┘
+```
+
+## 6) Complete Observability Stack
+
+With Phase 17 complete, the full observability stack is:
+
+```
+┌──────────────────────────────────────────────────────────┐
+│                     ag Backend                           │
+│  ┌────────────┐  ┌────────────┐  ┌────────────┐        │
+│  │  Metrics   │  │   Traces   │  │    Logs    │        │
+│  │ (Prom SDK) │  │ (OTEL SDK) │  │ (tracing)  │        │
+│  └─────┬──────┘  └─────┬──────┘  └─────┬──────┘        │
+└────────┼───────────────┼───────────────┼────────────────┘
+         │               │               │
+         │               │               ▼
+         │               │        ┌──────────────┐
+         │               │        │  journald    │
+         │               │        └──────┬───────┘
+         │               │               │
+         │               │               ▼
+         │               │        ┌──────────────┐
+         │               │        │  Promtail    │
+         │               │        └──────┬───────┘
+         │               │               │
+         ▼               ▼               ▼
+  ┌────────────┐  ┌────────────┐  ┌────────────┐
+  │ Prometheus │  │OTel Collect│  │    Loki    │
+  │  :9090     │  │  :4318     │  │   :3100    │
+  └─────┬──────┘  └─────┬──────┘  └─────┬──────┘
+        │               │               │
+        │               ▼               │
+        │        ┌────────────┐         │
+        │        │   Tempo    │         │
+        │        │   :3200    │         │
+        │        └─────┬──────┘         │
+        │              │                │
+        └──────────────┴────────────────┘
+                       │
+                       ▼
+               ┌───────────────┐
+               │    Grafana    │
+               │     :3000     │
+               └───────────────┘
+```
+
+## 7) Installer Notes (Phase 17)
+
+### 7.1 Installation Steps
+
+For automated installers, the following steps should be performed:
+
+1. **Download Loki and Promtail binaries**:
+   ```bash
+   # Loki
+   curl -L -o /tmp/loki.zip https://github.com/grafana/loki/releases/download/v3.0.0/loki-linux-amd64.zip
+   unzip -o /tmp/loki.zip -d /tmp
+   chmod +x /tmp/loki-linux-amd64
+   mv /tmp/loki-linux-amd64 ~/.local/bin/loki
+   
+   # Promtail
+   curl -L -o /tmp/promtail.zip https://github.com/grafana/loki/releases/download/v3.0.0/promtail-linux-amd64.zip
+   unzip -o /tmp/promtail.zip -d /tmp
+   chmod +x /tmp/promtail-linux-amd64
+   mv /tmp/promtail-linux-amd64 ~/.local/bin/promtail
+   ```
+
+2. **Create configuration directories**:
+   ```bash
+   mkdir -p ~/.config/loki
+   mkdir -p ~/.config/promtail
+   mkdir -p ~/.local/share/loki/{index,cache,chunks,compactor}
+   mkdir -p ~/.local/share/promtail
+   ```
+
+3. **Install configuration files**:
+   - Copy `loki/config.yml` to `~/.config/loki/config.yml`
+   - Copy `promtail/config.yml` to `~/.config/promtail/config.yml`
+
+4. **Install systemd user services**:
+   ```bash
+   mkdir -p ~/.config/systemd/user
+   # Copy loki.service and promtail.service
+   systemctl --user daemon-reload
+   systemctl --user enable --now loki.service
+   systemctl --user enable --now promtail.service
+   ```
+
+5. **Enable user service persistence** (if not already done):
+   ```bash
+   loginctl enable-linger $USER
+   ```
+
+### 7.2 Configuration Customization
+
+Installers should allow customization of:
+
+- **Loki retention period**: `limits_config.retention_period` (default: 168h / 7 days)
+- **Promtail scrape paths**: Additional log file paths beyond `~/.agentic-rag/logs/*.log`
+- **Loki storage location**: For production, consider dedicated disk/volume
+- **Port conflicts**: Loki HTTP (3100), Promtail HTTP (9080)
+
+### 7.3 System-wide vs User Service
+
+**Current implementation**: User services (recommended for development/single-user workstations)
+
+**For production/multi-user systems**, consider:
+
+- System-wide services: `/etc/systemd/system/loki.service`, `/etc/systemd/system/promtail.service`
+- Dedicated service user: `loki` user with appropriate permissions
+- System paths:
+  - Config: `/etc/loki/`, `/etc/promtail/`
+  - Data: `/var/lib/loki/`
+  - Binaries: `/usr/local/bin/loki`, `/usr/local/bin/promtail`
+
+## 8) Troubleshooting
+
+### 8.1 Loki not receiving logs
+
+```bash
+# Check Promtail is running and connected
+systemctl --user status promtail.service
+journalctl --user -u promtail.service -n 50
+
+# Check Promtail can reach Loki
+curl -s http://127.0.0.1:3100/ready
+
+# Check Promtail positions file
+cat ~/.local/share/promtail/positions.yaml
+```
+
+### 8.2 No logs from ag.service
+
+```bash
+# Verify ag.service is running and logging
+systemctl status ag.service
+journalctl -u ag.service -n 20
+
+# Check Promtail journal scraping
+journalctl --user -u promtail.service | grep "Adding target"
+```
+
+### 8.3 Loki storage issues
+
+```bash
+# Check disk space
+df -h ~/.local/share/loki/
+
+# Check Loki logs for errors
+journalctl --user -u loki.service -n 100
+
+# Verify storage directories exist and are writable
+ls -la ~/.local/share/loki/
+```
+
+### 8.4 Port conflicts
+
+```bash
+# Check if ports are in use
+ss -ltnp | grep -E ':(3100|9080)'
+
+# If conflicts exist, update configs:
+# - Loki: server.http_listen_port in config.yml
+# - Promtail: server.http_listen_port in config.yml
+```
+
+## 9) Next Steps (Future Enhancements)
+
+### 9.1 Log Correlation
+
+- Add `trace_id` and `span_id` to log entries
+- Enable jumping from traces to logs in Grafana
+- Implement structured logging with consistent fields
+
+### 9.2 Advanced Queries
+
+- Create saved LogQL queries for common patterns
+- Build Grafana dashboards with log panels
+- Set up log-based alerts (error rate, specific patterns)
+
+### 9.3 Multi-tenancy
+
+- Enable `auth_enabled: true` in Loki
+- Configure tenant IDs in Promtail
+- Separate logs by environment/service
+
+### 9.4 Performance Optimization
+
+- Tune Loki compactor settings
+- Implement log sampling for high-volume endpoints
+- Consider object storage backend (S3, GCS) for production
+
+### 9.5 High Availability
+
+- Deploy Loki in microservices mode
+- Add multiple Promtail instances
+- Implement log replication
+
+---
+
+**Phase 17 Status**: ✅ **COMPLETE**
+
+**Deliverables**:
+- ✅ Loki 3.0.0 installed and running as user service
+- ✅ Promtail 3.0.0 installed and running as user service
+- ✅ Systemd journal scraping configured for ag.service
+- ✅ File log scraping configured (ready for use)
+- ✅ Loki API verified and returning logs
+- ✅ Documentation complete
+
+added
+    VectorLokiProcessingErrors
+    VectorLokiNoTraffic (15m)
+    LokiDown (once Loki metrics job is added)
+    AgBackendDown
+    HighRequestLatency (p99 > 500ms)
+
+**Time to Complete**: ~15 minutes
+
+**Next Phase**: Phase 18 - Grafana Dashboards for Logs (optional)

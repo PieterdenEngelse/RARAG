@@ -1,0 +1,81 @@
+groups:
+  - name: phase17.core.alerts
+    interval: 30s
+    rules:
+      # 1) VectorLokiProcessingErrors – processing errors in Loki sink
+      - alert: VectorLokiProcessingErrors
+        expr: rate(vector_processing_errors_total{component_id="loki"}[5m]) > 0
+        for: 5m
+        labels:
+          severity: warning
+          service: ag-backend
+          component: vector-loki
+        annotations:
+          summary: "Vector → Loki: processing errors"
+          description: |
+            Vector is reporting processing errors for the Loki sink.
+            Check vector.service logs and loki.service status/logs.
+
+      # 2) VectorLokiNoTraffic – journald active, but Loki receiving almost nothing
+      - alert: VectorLokiNoTraffic
+        expr: |
+          rate(vector_component_received_events_total{component_id="journald"}[5m]) > 0
+          and rate(vector_component_sent_events_total{component_id="loki"}[5m]) < 0.01
+        for: 15m
+        labels:
+          severity: warning
+          service: ag-backend
+          component: vector-loki
+        annotations:
+          summary: "Vector → Loki: no traffic, journald still active"
+          description: |
+            Vector is receiving logs from journald but is not sending them to Loki.
+            This condition has held for at least 15 minutes.
+            Check vector.service and loki.service for connectivity and errors.
+
+      # 3) LokiDown – Loki scrape target unreachable (requires 'loki' scrape job)
+      - alert: LokiDown
+        expr: up{job="loki"} == 0
+        for: 5m
+        labels:
+          severity: warning
+          service: ag-backend
+          component: loki
+        annotations:
+          summary: "Loki is down"
+          description: |
+            The Prometheus scrape target for Loki (job="loki") has been down for 5 minutes.
+            Logs may not be queryable via Grafana.
+
+      # 4) AgBackendDown – ag backend unreachable (agentic-rag scrape job)
+      - alert: AgBackendDown
+        expr: up{job="agentic-rag"} == 0
+        for: 5m
+        labels:
+          severity: warning
+          service: ag-backend
+          component: http-api
+        annotations:
+          summary: "ag-backend is down"
+          description: |
+            The ag backend (job="agentic-rag") has been down for at least 5 minutes.
+            The HTTP API is not reachable on the configured host/port.
+
+      # 5) HighRequestLatency – p99 request latency > 500ms
+      - alert: HighRequestLatency
+        expr: |
+          histogram_quantile(
+            0.99,
+            sum by (le) (rate(request_latency_ms_bucket[5m]))
+          ) > 500
+        for: 10m
+        labels:
+          severity: warning
+          service: ag-backend
+          component: http-api
+        annotations:
+          summary: "High request latency (p99 > 500ms)"
+          description: |
+            The 99th percentile of HTTP request latency has exceeded 500ms
+            for at least 10 minutes. Check backend performance, index size,
+            and database/disk utilization.

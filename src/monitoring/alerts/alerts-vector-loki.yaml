@@ -1,0 +1,47 @@
+groups:
+  - name: vector-loki.alerts
+    interval: 30s
+    rules:
+      # Alert: Vector processing errors in Loki sink
+      - alert: VectorLokiProcessingErrors
+        expr: rate(vector_processing_errors_total{component_id="loki"}[5m]) > 0
+        for: 5m
+        labels:
+          severity: warning
+          service: ag-backend
+          component: vector-loki
+        annotations:
+          summary: "Vector processing errors in Loki sink"
+          description: |
+            Vector is reporting processing errors for the Loki sink.
+            Check vector.service logs and Loki status.
+
+      # Alert: No logs reaching Loki (Vector journald source still active)
+      - alert: VectorLokiNoTraffic
+        expr: |
+          rate(vector_component_received_events_total{component_id="journald"}[5m]) > 0
+          and rate(vector_component_sent_events_total{component_id="loki"}[5m]) < 0.01
+        for: 10m
+        labels:
+          severity: warning
+          service: ag-backend
+          component: vector-loki
+        annotations:
+          summary: "Logs are not reaching Loki from Vector"
+          description: |
+            Vector is receiving logs from journald but is not sending them to Loki.
+            Check vector.service and loki.service for errors.
+
+      # Alert: Loki ingestion spike (optional, capacity planning)
+      - alert: VectorLokiIngestionSpike
+        expr: rate(vector_component_sent_events_total{component_id="loki"}[5m]) > 1000
+        for: 5m
+        labels:
+          severity: info
+          service: ag-backend
+          component: vector-loki
+        annotations:
+          summary: "High Loki ingestion rate via Vector"
+          description: |
+            Loki is receiving more than 1000 events per second from Vector.
+            This may be expected during load tests, but review capacity and retention if sustained.

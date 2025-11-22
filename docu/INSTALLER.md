@@ -1680,3 +1680,945 @@ If traces are missing:
 - Confirm collector logs show a gRPC OTLP receiver on the expected port.
 - Double-check `OTEL_EXPORTER_OTLP_ENDPOINT` and `otlp` receiver endpoint match.
 - Temporarily set `OTEL_CONSOLE_EXPORT=true` to see spans emitted in backend logs for debugging.
+
+---
+
+## Phase 17 – Log Aggregation with Loki + Promtail (Installer Notes)
+
+**Version**: 1.0.0  
+**Date**: 2025-11-21  
+**Phase**: 17 (Log Aggregation)  
+**Status**: Complete & Verified
+
+---
+
+### Overview
+
+Phase 17 adds centralized log aggregation to the observability stack:
+
+- **Loki**: Log storage and aggregation backend (port 3100)
+- **Promtail**: Log shipper that scrapes journald and file logs
+- **Integration**: Logs flow to Grafana for querying and visualization
+
+This completes the observability triad:
+- **Metrics**: Prometheus (Phase 15)
+- **Traces**: OpenTelemetry → Collector → Tempo (Phase 16)
+- **Logs**: Promtail → Loki → Grafana (Phase 17)
+
+---
+
+### Installation Steps
+
+#### Step 1: Download Loki and Promtail Binaries
+
+**User Service Installation** (recommended for development/single-user):
+
+```bash
+#!/bin/bash
+# install_loki_promtail.sh - Install Loki and Promtail as user services
+
+LOKI_VERSION="3.0.0"
+BASE_URL="https://github.com/grafana/loki/releases/download/v${LOKI_VERSION}"
+
+echo "Installing Loki and Promtail ${LOKI_VERSION}..."
+
+# Download Loki
+echo "Downloading Loki..."
+curl -L -o /tmp/loki.zip "${BASE_URL}/loki-linux-amd64.zip"
+unzip -o /tmp/loki.zip -d /tmp
+chmod +x /tmp/loki-linux-amd64
+mkdir -p ~/.local/bin
+mv /tmp/loki-linux-amd64 ~/.local/bin/loki
+rm /tmp/loki.zip
+
+# Download Promtail
+echo "Downloading Promtail..."
+curl -L -o /tmp/promtail.zip "${BASE_URL}/promtail-linux-amd64.zip"
+unzip -o /tmp/promtail.zip -d /tmp
+chmod +x /tmp/promtail-linux-amd64
+mv /tmp/promtail-linux-amd64 ~/.local/bin/promtail
+rm /tmp/promtail.zip
+
+# Verify installations
+echo ""
+echo "Verifying installations..."
+~/.local/bin/loki --version
+~/.local/bin/promtail --version
+
+echo ""
+echo "✅ Loki and Promtail installed successfully!"
+```
+
+**System-wide Installation** (for production/multi-user):
+
+```bash
+#!/bin/bash
+# install_loki_promtail_system.sh - Install Loki and Promtail system-wide
+
+LOKI_VERSION="3.0.0"
+BASE_URL="https://github.com/grafana/loki/releases/download/v${LOKI_VERSION}"
+
+echo "Installing Loki and Promtail ${LOKI_VERSION} system-wide..."
+
+# Download Loki
+echo "Downloading Loki..."
+curl -L -o /tmp/loki.zip "${BASE_URL}/loki-linux-amd64.zip"
+unzip -o /tmp/loki.zip -d /tmp
+chmod +x /tmp/loki-linux-amd64
+sudo mv /tmp/loki-linux-amd64 /usr/local/bin/loki
+rm /tmp/loki.zip
+
+# Download Promtail
+echo "Downloading Promtail..."
+curl -L -o /tmp/promtail.zip "${BASE_URL}/promtail-linux-amd64.zip"
+unzip -o /tmp/promtail.zip -d /tmp
+chmod +x /tmp/promtail-linux-amd64
+sudo mv /tmp/promtail-linux-amd64 /usr/local/bin/promtail
+rm /tmp/promtail.zip
+
+# Verify installations
+echo ""
+echo "Verifying installations..."
+loki --version
+promtail --version
+
+echo ""
+echo "✅ Loki and Promtail installed successfully!"
+```
+
+---
+
+#### Step 2: Create Configuration Directories
+
+**User Service**:
+
+```bash
+# Create config directories
+mkdir -p ~/.config/loki
+mkdir -p ~/.config/promtail
+
+# Create data directories
+mkdir -p ~/.local/share/loki/{index,cache,chunks,compactor}
+mkdir -p ~/.local/share/promtail
+
+echo "✅ Configuration directories created"
+```
+
+**System-wide**:
+
+```bash
+# Create config directories
+sudo mkdir -p /etc/loki
+sudo mkdir -p /etc/promtail
+
+# Create data directories
+sudo mkdir -p /var/lib/loki/{index,cache,chunks,compactor}
+sudo mkdir -p /var/lib/promtail
+
+# Create dedicated user (optional but recommended)
+sudo useradd --system --no-create-home --shell /bin/false loki
+
+# Set permissions
+sudo chown -R loki:loki /var/lib/loki
+sudo chown -R loki:loki /etc/loki
+sudo chown -R loki:loki /var/lib/promtail
+sudo chown -R loki:loki /etc/promtail
+
+echo "✅ System directories created"
+```
+
+---
+
+#### Step 3: Configure Loki
+
+**User Service Config** (`~/.config/loki/config.yml`):
+
+```yaml
+auth_enabled: false
+
+server:
+  http_listen_port: 3100
+  grpc_listen_port: 0  # Disabled to avoid port conflicts
+
+common:
+  path_prefix: /home/YOUR_USERNAME/.local/share/loki
+  storage:
+    filesystem:
+      chunks_directory: /home/YOUR_USERNAME/.local/share/loki/chunks
+      rules_directory: /home/YOUR_USERNAME/.local/share/loki/rules
+  replication_factor: 1
+  ring:
+    kvstore:
+      store: inmemory
+
+schema_config:
+  configs:
+    - from: 2023-01-01
+      store: boltdb-shipper
+      object_store: filesystem
+      schema: v13
+      index:
+        prefix: index_
+        period: 24h
+
+storage_config:
+  boltdb_shipper:
+    active_index_directory: /home/YOUR_USERNAME/.local/share/loki/index
+    cache_location: /home/YOUR_USERNAME/.local/share/loki/cache
+  filesystem:
+    directory: /home/YOUR_USERNAME/.local/share/loki/chunks
+
+compactor:
+  working_directory: /home/YOUR_USERNAME/.local/share/loki/compactor
+  compaction_interval: 10m
+  retention_enabled: true
+  retention_delete_delay: 2h
+  retention_delete_worker_count: 150
+
+limits_config:
+  retention_period: 168h  # 7 days
+  max_cache_freshness_per_query: 10m
+  split_queries_by_interval: 15m
+  allow_structured_metadata: false
+
+chunk_store_config:
+  max_look_back_period: 0s
+
+table_manager:
+  retention_deletes_enabled: true
+  retention_period: 168h
+```
+
+**System-wide Config** (`/etc/loki/config.yml`):
+
+```yaml
+auth_enabled: false
+
+server:
+  http_listen_port: 3100
+  grpc_listen_port: 0
+
+common:
+  path_prefix: /var/lib/loki
+  storage:
+    filesystem:
+      chunks_directory: /var/lib/loki/chunks
+      rules_directory: /var/lib/loki/rules
+  replication_factor: 1
+  ring:
+    kvstore:
+      store: inmemory
+
+schema_config:
+  configs:
+    - from: 2023-01-01
+      store: boltdb-shipper
+      object_store: filesystem
+      schema: v13
+      index:
+        prefix: index_
+        period: 24h
+
+storage_config:
+  boltdb_shipper:
+    active_index_directory: /var/lib/loki/index
+    cache_location: /var/lib/loki/cache
+  filesystem:
+    directory: /var/lib/loki/chunks
+
+compactor:
+  working_directory: /var/lib/loki/compactor
+  compaction_interval: 10m
+  retention_enabled: true
+  retention_delete_delay: 2h
+  retention_delete_worker_count: 150
+
+limits_config:
+  retention_period: 168h  # 7 days
+  max_cache_freshness_per_query: 10m
+  split_queries_by_interval: 15m
+  allow_structured_metadata: false
+
+chunk_store_config:
+  max_look_back_period: 0s
+
+table_manager:
+  retention_deletes_enabled: true
+  retention_period: 168h
+```
+
+**Important**: Replace `YOUR_USERNAME` with the actual username in user service configs.
+
+---
+
+#### Step 4: Configure Promtail
+
+**User Service Config** (`~/.config/promtail/config.yml`):
+
+```yaml
+server:
+  http_listen_port: 9080
+  grpc_listen_port: 0
+
+positions:
+  filename: /home/YOUR_USERNAME/.local/share/promtail/positions.yaml
+
+clients:
+  - url: http://127.0.0.1:3100/loki/api/v1/push
+
+scrape_configs:
+  # Scrape systemd journal for ag.service
+  - job_name: systemd-journal
+    journal:
+      max_age: 12h
+      labels:
+        job: systemd-journal
+        host: localhost
+    relabel_configs:
+      # Only include ag.service logs
+      - source_labels: ['__journal__systemd_unit']
+        target_label: 'systemd_unit'
+      - source_labels: ['__journal__systemd_unit']
+        regex: 'ag.service'
+        action: keep
+      # Add other useful journal fields
+      - source_labels: ['__journal__hostname']
+        target_label: 'hostname'
+      - source_labels: ['__journal_priority']
+        target_label: 'priority'
+      - source_labels: ['__journal_syslog_identifier']
+        target_label: 'syslog_identifier'
+
+  # Scrape file logs from ~/.agentic-rag/logs/
+  - job_name: ag-file-logs
+    static_configs:
+      - targets:
+          - localhost
+        labels:
+          job: ag-file-logs
+          host: localhost
+          __path__: /home/YOUR_USERNAME/.agentic-rag/logs/*.log
+```
+
+**System-wide Config** (`/etc/promtail/config.yml`):
+
+```yaml
+server:
+  http_listen_port: 9080
+  grpc_listen_port: 0
+
+positions:
+  filename: /var/lib/promtail/positions.yaml
+
+clients:
+  - url: http://127.0.0.1:3100/loki/api/v1/push
+
+scrape_configs:
+  # Scrape systemd journal for ag.service
+  - job_name: systemd-journal
+    journal:
+      max_age: 12h
+      labels:
+        job: systemd-journal
+        host: localhost
+    relabel_configs:
+      - source_labels: ['__journal__systemd_unit']
+        target_label: 'systemd_unit'
+      - source_labels: ['__journal__systemd_unit']
+        regex: 'ag.service'
+        action: keep
+      - source_labels: ['__journal__hostname']
+        target_label: 'hostname'
+      - source_labels: ['__journal_priority']
+        target_label: 'priority'
+      - source_labels: ['__journal_syslog_identifier']
+        target_label: 'syslog_identifier'
+
+  # Scrape file logs
+  - job_name: ag-file-logs
+    static_configs:
+      - targets:
+          - localhost
+        labels:
+          job: ag-file-logs
+          host: localhost
+          __path__: /var/log/ag/*.log
+```
+
+---
+
+#### Step 5: Create Systemd Services
+
+**User Service - Loki** (`~/.config/systemd/user/loki.service`):
+
+```ini
+[Unit]
+Description=Grafana Loki (user)
+After=network.target
+
+[Service]
+Type=simple
+ExecStart=%h/.local/bin/loki -config.file=%h/.config/loki/config.yml
+Restart=on-failure
+RestartSec=3
+
+[Install]
+WantedBy=default.target
+```
+
+**User Service - Promtail** (`~/.config/systemd/user/promtail.service`):
+
+```ini
+[Unit]
+Description=Grafana Promtail (user)
+After=network.target loki.service
+
+[Service]
+Type=simple
+ExecStart=%h/.local/bin/promtail -config.file=%h/.config/promtail/config.yml
+Restart=on-failure
+RestartSec=3
+
+[Install]
+WantedBy=default.target
+```
+
+**System-wide Service - Loki** (`/etc/systemd/system/loki.service`):
+
+```ini
+[Unit]
+Description=Grafana Loki
+After=network.target
+
+[Service]
+Type=simple
+User=loki
+Group=loki
+ExecStart=/usr/local/bin/loki -config.file=/etc/loki/config.yml
+Restart=on-failure
+RestartSec=3
+WorkingDirectory=/var/lib/loki
+
+# Security hardening
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/loki
+
+[Install]
+WantedBy=multi-user.target
+```
+
+**System-wide Service - Promtail** (`/etc/systemd/system/promtail.service`):
+
+```ini
+[Unit]
+Description=Grafana Promtail
+After=network.target loki.service
+
+[Service]
+Type=simple
+User=loki
+Group=loki
+ExecStart=/usr/local/bin/promtail -config.file=/etc/promtail/config.yml
+Restart=on-failure
+RestartSec=3
+WorkingDirectory=/var/lib/promtail
+
+# Security hardening
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/promtail
+
+[Install]
+WantedBy=multi-user.target
+```
+
+---
+
+#### Step 6: Enable and Start Services
+
+**User Services**:
+
+```bash
+# Reload systemd
+systemctl --user daemon-reload
+
+# Enable services to start on login
+systemctl --user enable loki.service
+systemctl --user enable promtail.service
+
+# Start services
+systemctl --user start loki.service
+systemctl --user start promtail.service
+
+# Enable user services to persist after logout
+loginctl enable-linger $USER
+
+# Check status
+systemctl --user status loki.service
+systemctl --user status promtail.service
+```
+
+**System-wide Services**:
+
+```bash
+# Reload systemd
+sudo systemctl daemon-reload
+
+# Enable services to start at boot
+sudo systemctl enable loki.service
+sudo systemctl enable promtail.service
+
+# Start services
+sudo systemctl start loki.service
+sudo systemctl start promtail.service
+
+# Check status
+sudo systemctl status loki.service
+sudo systemctl status promtail.service
+```
+
+---
+
+### Verification Steps
+
+#### Step 1: Verify Loki is Running
+
+```bash
+# Check service status
+systemctl --user status loki.service  # User service
+# OR
+sudo systemctl status loki.service    # System service
+
+# Check Loki ready endpoint
+curl -s http://127.0.0.1:3100/ready
+# Expected: "ready"
+
+# Check Loki metrics
+curl -s http://127.0.0.1:3100/metrics | head -20
+```
+
+#### Step 2: Verify Promtail is Running
+
+```bash
+# Check service status
+systemctl --user status promtail.service  # User service
+# OR
+sudo systemctl status promtail.service    # System service
+
+# Check Promtail logs
+journalctl --user -u promtail.service -n 50  # User service
+# OR
+sudo journalctl -u promtail.service -n 50    # System service
+
+# Look for "Adding target" messages indicating successful scraping
+```
+
+#### Step 3: Verify Log Ingestion
+
+```bash
+# Query Loki for ag.service logs
+curl -s -G "http://127.0.0.1:3100/loki/api/v1/query" \
+  --data-urlencode 'query={systemd_unit="ag.service"}' \
+  --data-urlencode 'limit=5'
+
+# Check available labels
+curl -s "http://127.0.0.1:3100/loki/api/v1/labels"
+# Expected: ["host","hostname","job","priority","service_name","syslog_identifier","systemd_unit"]
+
+# Check job values
+curl -s "http://127.0.0.1:3100/loki/api/v1/label/job/values"
+# Expected: ["systemd-journal"] (and "ag-file-logs" if file logs exist)
+```
+
+#### Step 4: Configure Grafana Datasource
+
+**Manual Configuration**:
+
+1. Open Grafana (typically `http://localhost:3000`)
+2. Go to **Configuration** → **Data Sources**
+3. Click **Add data source**
+4. Select **Loki**
+5. Configure:
+   - **Name**: `Loki`
+   - **URL**: `http://127.0.0.1:3100`
+   - **Access**: `Server` (default)
+6. Click **Save & Test**
+   - Expected: "Data source is working"
+
+**Automated Configuration** (Grafana provisioning):
+
+Create `/etc/grafana/provisioning/datasources/loki.yml`:
+
+```yaml
+apiVersion: 1
+
+datasources:
+  - name: Loki
+    type: loki
+    access: proxy
+    url: http://127.0.0.1:3100
+    isDefault: false
+    editable: true
+```
+
+Then restart Grafana:
+
+```bash
+sudo systemctl restart grafana-server
+```
+
+---
+
+### Troubleshooting
+
+#### Issue: Loki service fails to start
+
+**Check logs**:
+
+```bash
+journalctl --user -u loki.service -n 100  # User service
+# OR
+sudo journalctl -u loki.service -n 100    # System service
+```
+
+**Common issues**:
+
+1. **Port already in use**:
+   ```bash
+   ss -ltnp | grep :3100
+   # If port is occupied, change http_listen_port in config.yml
+   ```
+
+2. **Permission denied on data directories**:
+   ```bash
+   # User service
+   ls -la ~/.local/share/loki/
+   chmod -R 755 ~/.local/share/loki/
+   
+   # System service
+   sudo ls -la /var/lib/loki/
+   sudo chown -R loki:loki /var/lib/loki/
+   ```
+
+3. **Invalid configuration**:
+   ```bash
+   # Test config manually
+   ~/.local/bin/loki -config.file=~/.config/loki/config.yml -verify-config
+   ```
+
+#### Issue: Promtail not scraping logs
+
+**Check Promtail logs**:
+
+```bash
+journalctl --user -u promtail.service | grep -E "(Adding target|error|warn)"
+```
+
+**Common issues**:
+
+1. **Journal access denied**:
+   ```bash
+   # Add user to systemd-journal group
+   sudo usermod -a -G systemd-journal $USER
+   # Log out and back in for group change to take effect
+   ```
+
+2. **File paths incorrect**:
+   ```bash
+   # Verify log files exist
+   ls -la ~/.agentic-rag/logs/
+   # Update __path__ in promtail config if needed
+   ```
+
+3. **Loki unreachable**:
+   ```bash
+   # Test Loki from Promtail's perspective
+   curl -s http://127.0.0.1:3100/ready
+   ```
+
+#### Issue: No logs appearing in Grafana
+
+**Verify data flow**:
+
+```bash
+# 1. Check ag.service is running and logging
+systemctl status ag.service
+journalctl -u ag.service -n 20
+
+# 2. Check Promtail is scraping
+journalctl --user -u promtail.service | grep "Adding target"
+
+# 3. Check Loki has received logs
+curl -s "http://127.0.0.1:3100/loki/api/v1/label/systemd_unit/values"
+# Should include "ag.service"
+
+# 4. Check Grafana datasource
+curl -s http://localhost:3000/api/datasources | jq '.[] | select(.type=="loki")'
+```
+
+---
+
+### Configuration Customization
+
+#### Adjust Log Retention
+
+Edit Loki config (`config.yml`):
+
+```yaml
+limits_config:
+  retention_period: 336h  # 14 days (default: 168h / 7 days)
+
+table_manager:
+  retention_period: 336h  # Must match limits_config
+```
+
+Restart Loki:
+
+```bash
+systemctl --user restart loki.service  # User service
+# OR
+sudo systemctl restart loki.service    # System service
+```
+
+#### Add Additional Log Sources
+
+Edit Promtail config (`config.yml`), add to `scrape_configs`:
+
+```yaml
+  # Example: Scrape nginx logs
+  - job_name: nginx
+    static_configs:
+      - targets:
+          - localhost
+        labels:
+          job: nginx
+          host: localhost
+          __path__: /var/log/nginx/*.log
+```
+
+Restart Promtail:
+
+```bash
+systemctl --user restart promtail.service  # User service
+# OR
+sudo systemctl restart promtail.service    # System service
+```
+
+#### Change Ports
+
+If ports 3100 (Loki) or 9080 (Promtail) conflict:
+
+**Loki** (`config.yml`):
+
+```yaml
+server:
+  http_listen_port: 3101  # Change from 3100
+```
+
+**Promtail** (`config.yml`):
+
+```yaml
+server:
+  http_listen_port: 9081  # Change from 9080
+
+clients:
+  - url: http://127.0.0.1:3101/loki/api/v1/push  # Update if Loki port changed
+```
+
+Restart both services after changes.
+
+---
+
+### Performance Tuning
+
+#### For High-Volume Logs
+
+**Loki config optimizations**:
+
+```yaml
+limits_config:
+  ingestion_rate_mb: 10  # Increase from default 4MB
+  ingestion_burst_size_mb: 20  # Increase from default 6MB
+  max_streams_per_user: 10000  # Increase if many log sources
+  max_line_size: 256kb  # Increase if log lines are very long
+
+chunk_store_config:
+  chunk_cache_config:
+    enable_fifocache: true
+    fifocache:
+      max_size_bytes: 1GB  # Increase cache size
+```
+
+**Promtail config optimizations**:
+
+```yaml
+clients:
+  - url: http://127.0.0.1:3100/loki/api/v1/push
+    batchwait: 1s      # Increase batch wait time
+    batchsize: 1048576 # 1MB batch size (default: 102400)
+```
+
+---
+
+### Security Considerations
+
+#### Enable Authentication (Production)
+
+**Loki config**:
+
+```yaml
+auth_enabled: true
+
+server:
+  http_listen_address: 127.0.0.1  # Only listen on localhost
+```
+
+**Promtail config** (add basic auth):
+
+```yaml
+clients:
+  - url: http://127.0.0.1:3100/loki/api/v1/push
+    basic_auth:
+      username: promtail
+      password: YOUR_SECURE_PASSWORD
+```
+
+#### Restrict Network Access
+
+**Firewall rules** (if Loki is exposed):
+
+```bash
+# Allow only localhost
+sudo ufw allow from 127.0.0.1 to any port 3100
+sudo ufw deny 3100
+```
+
+#### Sanitize Sensitive Data
+
+**Promtail pipeline stages** (redact sensitive info):
+
+```yaml
+scrape_configs:
+  - job_name: systemd-journal
+    journal:
+      max_age: 12h
+    pipeline_stages:
+      # Redact email addresses
+      - replace:
+          expression: '([a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,})'
+          replace: '[EMAIL_REDACTED]'
+      # Redact IP addresses
+      - replace:
+          expression: '\b(?:[0-9]{1,3}\.){3}[0-9]{1,3}\b'
+          replace: '[IP_REDACTED]'
+```
+
+---
+
+### Integration with Existing Stack
+
+#### Complete Observability Stack Ports
+
+| Service | Port | Purpose |
+|---------|------|----------|
+| **ag backend** | 3010 | Main application API |
+| **Prometheus** | 9090 | Metrics collection |
+| **Grafana** | 3000 | Visualization dashboard |
+| **OTel Collector** | 4318 | Trace collection (gRPC) |
+| **OTel Collector** | 4319 | Trace collection (HTTP) |
+| **Tempo** | 3200 | Trace storage |
+| **Loki** | 3100 | Log storage |
+| **Promtail** | 9080 | Log shipper metrics |
+
+#### Service Dependencies
+
+```
+ag.service
+  │
+  ├── Metrics → Prometheus :9090
+  │
+  ├── Traces → OTel Collector :4318 → Tempo :3200
+  │
+  └── Logs → journald → Promtail :9080 → Loki :3100
+                                                    │
+                                                    └── Grafana :3000
+```
+
+---
+
+### Installer Checklist
+
+**Pre-Installation**:
+
+- [ ] Verify system has `unzip` installed: `which unzip`
+- [ ] Check port availability: `ss -ltnp | grep -E ':(3100|9080)'`
+- [ ] Ensure sufficient disk space: `df -h` (recommend 10GB+ for logs)
+- [ ] Verify journald is running: `systemctl status systemd-journald`
+
+**Installation**:
+
+- [ ] Download Loki and Promtail binaries
+- [ ] Create configuration directories
+- [ ] Install Loki configuration file
+- [ ] Install Promtail configuration file
+- [ ] Update paths in configs (replace `YOUR_USERNAME`)
+- [ ] Create systemd service files
+- [ ] Enable and start services
+- [ ] Enable linger for user services: `loginctl enable-linger $USER`
+
+**Post-Installation**:
+
+- [ ] Verify Loki is running: `curl http://127.0.0.1:3100/ready`
+- [ ] Verify Promtail is running: `systemctl --user status promtail.service`
+- [ ] Verify log ingestion: `curl -s "http://127.0.0.1:3100/loki/api/v1/labels"`
+- [ ] Configure Grafana Loki datasource
+- [ ] Test log queries in Grafana Explore
+- [ ] Document configuration for users
+
+**Documentation**:
+
+- [ ] Add Phase 17 to installer README
+- [ ] Document Loki/Promtail configuration options
+- [ ] Add "Log Aggregation" section to user guide
+- [ ] Update troubleshooting guide with log-specific issues
+- [ ] Create Phase 17 configuration templates
+
+---
+
+### Rollback Procedure
+
+If Phase 17 needs to be removed:
+
+```bash
+# Stop and disable services
+systemctl --user stop loki.service promtail.service
+systemctl --user disable loki.service promtail.service
+
+# Remove binaries
+rm ~/.local/bin/loki ~/.local/bin/promtail
+
+# Remove configurations (optional - keep for future use)
+rm -rf ~/.config/loki ~/.config/promtail
+
+# Remove data (optional - will delete all logs)
+rm -rf ~/.local/share/loki ~/.local/share/promtail
+
+# Remove systemd units
+rm ~/.config/systemd/user/loki.service
+rm ~/.config/systemd/user/promtail.service
+systemctl --user daemon-reload
+
+echo "✅ Phase 17 components removed"
+```
+
+---
+
+### Summary
+
+
+
