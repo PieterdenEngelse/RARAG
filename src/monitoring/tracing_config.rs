@@ -22,6 +22,9 @@ use tracing_appender::rolling::daily;
 /// - Creates log directory
 /// - Sets up file rotation
 /// - Enables console output
+/// 
+/// Returns a guard that must be kept alive for the duration of the program.
+/// Dropping the guard will stop file logging.
 pub fn init_tracing(config: &MonitoringConfig) -> Result<Box<dyn std::any::Any>, Box<dyn std::error::Error>> {
     if !config.enabled {
         // No-op guard if monitoring disabled
@@ -49,7 +52,7 @@ pub fn init_tracing(config: &MonitoringConfig) -> Result<Box<dyn std::any::Any>,
         if config.enable_file_logging {
             // Both file and console
             let file_appender = daily(&config.log_dir, "backend.log");
-            let (non_blocking_file, _guard) = non_blocking(file_appender);
+            let (non_blocking_file, guard) = non_blocking(file_appender);
             
             let file_layer = fmt::layer()
                 .with_writer(non_blocking_file)
@@ -58,6 +61,9 @@ pub fn init_tracing(config: &MonitoringConfig) -> Result<Box<dyn std::any::Any>,
             
             let subscriber = registry.with(console_layer).with(file_layer);
             let _ = subscriber.try_init();
+            
+            // Return the guard to keep file logging alive
+            return Ok(Box::new(guard));
         } else {
             // Console only
             let _ = registry.with(console_layer).try_init();
@@ -65,7 +71,7 @@ pub fn init_tracing(config: &MonitoringConfig) -> Result<Box<dyn std::any::Any>,
     } else if config.enable_file_logging {
         // File only
         let file_appender = daily(&config.log_dir, "backend.log");
-        let (non_blocking_file, _guard) = non_blocking(file_appender);
+        let (non_blocking_file, guard) = non_blocking(file_appender);
         
         let file_layer = fmt::layer()
             .with_writer(non_blocking_file)
@@ -73,6 +79,9 @@ pub fn init_tracing(config: &MonitoringConfig) -> Result<Box<dyn std::any::Any>,
             .json();
         
         let _ = registry.with(file_layer).try_init();
+        
+        // Return the guard to keep file logging alive
+        return Ok(Box::new(guard));
     }
     
     Ok(Box::new(()))

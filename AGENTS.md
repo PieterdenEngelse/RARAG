@@ -2,34 +2,32 @@
 
 ## Project Structure & Module Organization
 
-- Backend (Rust): ./src – Actix Web API, retriever, indexing, monitoring, security, cache, etc. Key modules:
-  - src/api (HTTP routes and handlers)
-  - src/retriever.rs, src/index.rs, src/embedder.rs
-  - src/monitoring (metrics, tracing, rate limiting middleware)
-  - src/cache (L2 memory cache, Redis L3 cache)
-  - src/config.rs, src/path_manager.rs
-  - src/db/schema_init.rs (database bootstrapping)
-- Frontend (Dioxus/Tailwind): ./frontend/fro with Rust UI in src/, Dioxus.toml, Tailwind config, and Node scripts.
-- Tests: ./tests (integration, monitoring, rate-limit, cache tests).
-- Runtime/data: ./documents (uploads), ./tantivy_index, ./data, ./db, ./cache, ./logs.
-- Scripts and installers: ./install.sh, ./installers/, ./scripts/.
+- **Backend (Rust)**: `./src` – Actix Web API with core modules:
+  - `src/api/` – HTTP routes (upload, search, reindex, agent, memory, tools)
+  - `src/retriever.rs`, `src/index.rs`, `src/embedder.rs` – Search and indexing engine
+  - `src/monitoring/` – Metrics, tracing, OpenTelemetry, rate limiting
+  - `src/cache/` – L2 memory cache and L3 Redis cache
+  - `src/memory/`, `src/tools/` – Agent memory and tool execution
+- **Frontend (Dioxus)**: `./frontend/fro` – Rust-based web UI with Tailwind CSS
+- **Tests**: `./tests` – Integration tests for retriever, monitoring, rate limits, caching
+- **Runtime data**: `./documents` (uploads), `./tantivy_index`, `./data`, `./db`, `./cache`, `./logs`
 
 ## Build, Test, and Development Commands
 
 ```bash
-# Backend: run (dev)
+# Backend: run development server
 cargo run
 
-# Backend: build release
+# Backend: build optimized release
 cargo build --release
 
-# Backend: run tests
+# Backend: run all tests
 cargo test
 
-# Frontend: build CSS once
+# Frontend: build Tailwind CSS once
 cd frontend/fro && npm run css:build
 
-# Frontend: watch CSS during dev
+# Frontend: watch CSS during development
 cd frontend/fro && npm run css:watch
 
 # Frontend: serve Dioxus app (requires dx CLI)
@@ -38,23 +36,34 @@ cd frontend/fro && dx serve --platform web
 
 ## Coding Style & Naming Conventions
 
-- Indentation: 4 spaces (Rust and JS).
-- Rust style: modules and files in snake_case (e.g., src/path_manager.rs), types in UpperCamelCase, functions/variables in snake_case, consts in SCREAMING_SNAKE_CASE.
-- Frontend config uses common JS conventions (camelCase identifiers; see tailwind.config.js).
-- Lint/format: rustfmt and clippy recommended; no explicit config files present. Follow Actix/Dioxus idioms.
+- **Indentation**: 4 spaces (Rust and JavaScript)
+- **Rust naming**: 
+  - Modules/files: `snake_case` (e.g., `path_manager.rs`)
+  - Types/structs: `UpperCamelCase` (e.g., `ApiConfig`)
+  - Functions/variables: `snake_case` (e.g., `index_all_documents`)
+  - Constants: `SCREAMING_SNAKE_CASE` (e.g., `UPLOAD_DIR`)
+- **Linting**: Use `rustfmt` and `clippy` for Rust code
+- **Frontend**: Follow Dioxus component patterns; Tailwind utility classes for styling
 
 ## Testing Guidelines
 
-- Framework: Rust built-in test framework (cargo test).
-- Locations: integration/system tests in ./tests (e.g., retriever_tests.rs, rate_limit_middleware_integration_test.rs). Unit tests may appear alongside modules with #[cfg(test)].
-- Run: cargo test
-- Coverage: No explicit coverage tooling or thresholds configured.
+- **Framework**: Rust built-in test framework (`cargo test`)
+- **Test locations**: 
+  - Integration tests: `./tests/*.rs`
+  - Unit tests: Inline with `#[cfg(test)]` modules in source files
+- **Running tests**: `cargo test` (runs all tests)
+- **Test naming**: Use descriptive names like `test_cache_hit_miss`, `test_rate_limit_enforcement`
+- **Coverage**: No explicit coverage requirements; focus on critical paths (retriever, API, monitoring)
 
 ## Commit & Pull Request Guidelines
 
-- Commit format: Not enforced; write clear, imperative messages describing the why and what. Reference modules when relevant (e.g., monitoring: add Prometheus endpoint).
-- PR process: Include rationale, test results (cargo test), and any env or config changes affecting monitoring/rate limits. Update AGENTS.md when altering APIs or structure.
-- Branches: Feature branches under feature/<short-name> are present in git refs; use descriptive names.
+- **Commit format**: Descriptive messages with context (e.g., "phase 17 completed", "Phase 15 Step 3: Async startup, concurrency guard")
+- **Commit style**: Use imperative mood; reference phase/feature when applicable
+- **PR requirements**: 
+  - Ensure `cargo test` passes
+  - Update documentation if adding new endpoints or features
+  - Include rationale for architectural changes
+- **Branch naming**: Use `feature/<name>` for new features (e.g., `feature/monitoring-improvements`)
 
 ---
 
@@ -62,12 +71,14 @@ cd frontend/fro && dx serve --platform web
 
 ## 🎯 What This Repository Does
 
-ag is a Rust-based Agentic RAG service that exposes an Actix Web API for document upload, indexing, search, simple rerank/summarize, and monitoring; it includes a Dioxus + Tailwind frontend.
+**ag** is a Rust-based Agentic RAG (Retrieval-Augmented Generation) service that provides document indexing, semantic search, and agent memory capabilities through an Actix Web API, with a Dioxus-based web frontend.
 
-Key responsibilities:
-- Index and search text/PDF files using Tantivy and simple embeddings
-- Serve HTTP endpoints for upload, search, reindex (sync/async), agent memory
-- Expose metrics and tracing for observability; optional Redis cache layer
+**Key responsibilities:**
+- Index and search text/PDF documents using Tantivy full-text search and vector embeddings
+- Provide HTTP API for document upload, search, reindex (sync/async), and agent operations
+- Expose comprehensive monitoring via Prometheus metrics, OpenTelemetry tracing, and health endpoints
+- Support multi-layer caching (L2 in-memory, L3 Redis) for performance optimization
+- Enable agent memory and tool execution for agentic workflows
 
 ---
 
@@ -75,165 +86,439 @@ Key responsibilities:
 
 ### System Context
 ```
-[Browser / Client] → [Actix Web backend (ag)] → [Rusqlite/Tantivy on disk]
-                             ↓
-                     [Dioxus Web Frontend]
+[Browser/Client] → [Actix Web API (ag)] → [Tantivy Index + SQLite]
+                          ↓                        ↓
+                   [Dioxus Frontend]        [Redis Cache (optional)]
+                          ↓
+                   [Prometheus/OTLP Collector]
 ```
 
 ### Key Components
-- HTTP API (src/api): Upload, reindex (sync/async), search, memory, agent endpoints; global retriever handle.
-- Retriever/Indexing (src/retriever.rs, src/index.rs): Tantivy index, vector storage JSON, hybrid utilities, atomic reindex.
-- Monitoring (src/monitoring): metrics export (/monitoring/metrics), health/ready, OpenTelemetry setup, rate limit middleware.
-- Caching (src/cache): L2 in-memory cache and optional L3 Redis cache.
-- Config/Paths (src/config.rs, src/path_manager.rs): env-driven server, rate limits, and managed data/index paths.
-- Frontend (frontend/fro): Dioxus app; Tailwind for styling and asset pipeline.
+
+- **HTTP API (`src/api/`)** - Actix Web server exposing RESTful endpoints:
+  - Document management: upload, list, delete
+  - Search operations: full-text search, rerank, summarize
+  - Indexing: synchronous and asynchronous reindex with job tracking
+  - Agent operations: memory storage/retrieval, tool execution
+  - Monitoring: health, readiness, Prometheus metrics
+
+- **Retriever (`src/retriever.rs`)** - Core search engine:
+  - Tantivy-based full-text indexing
+  - Vector storage for semantic search (JSON-based)
+  - Multi-layer caching (L1 query cache, L2 LRU memory, L3 Redis)
+  - Metrics tracking (searches, cache hits/misses, latency)
+  - Atomic reindex with batch operations
+
+- **Indexing Pipeline (`src/index.rs`)** - Document processing:
+  - File scanning and text extraction (txt, pdf)
+  - Text chunking (line-based)
+  - Embedding generation via `embedder.rs`
+  - Batch indexing for performance
+
+- **Monitoring (`src/monitoring/`)** - Observability stack:
+  - Prometheus metrics export (`/monitoring/metrics`)
+  - OpenTelemetry distributed tracing (OTLP exporter)
+  - Health and readiness checks
+  - Rate limiting middleware with per-route rules
+  - Configurable histogram buckets for latency tracking
+
+- **Caching (`src/cache/`)** - Performance optimization:
+  - L2: In-memory LRU cache for search results
+  - L3: Optional Redis cache with TTL
+  - Cache invalidation on reindex
+
+- **Agent System (`src/memory/`, `src/tools/`)** - Agentic capabilities:
+  - Agent memory layer with SQLite persistence
+  - Tool registry and execution framework
+  - Decision engine for query planning
+  - Multi-agent coordination support
+
+- **Frontend (`frontend/fro/`)** - Dioxus web application:
+  - Rust-based UI components
+  - Tailwind CSS for styling
+  - API client for backend communication
 
 ### Data Flow
-1. Client uploads files to /upload; files stored under ./documents.
-2. Reindex is triggered (background at startup unless SKIP_INITIAL_INDEXING=true, or via /reindex or /reindex/async).
-3. src/index.rs parses supported files (txt/pdf placeholder), chunks lines, embeds, and writes to Tantivy + vectors.json.
-4. /search queries Tantivy; optional caches (L2/L3) and metrics are updated; response returned as JSON.
+
+1. **Document Upload**: Client uploads files via `POST /upload` → files stored in `./documents`
+2. **Indexing**: Background task or explicit `POST /reindex` triggers indexing:
+   - `index.rs` scans `./documents`, extracts text, chunks content
+   - `embedder.rs` generates embeddings for each chunk
+   - `retriever.rs` writes to Tantivy index and `vectors.json`
+3. **Search**: Client queries via `GET /search?q=<query>`:
+   - Check L2/L3 caches for cached results
+   - Query Tantivy index for full-text matches
+   - Optionally rerank by vector similarity
+   - Update metrics and cache results
+4. **Monitoring**: Prometheus scrapes `/monitoring/metrics` for metrics; OpenTelemetry traces sent to OTLP collector
 
 ---
 
 ## 📁 Project Structure [Partial Directory Tree]
 
 ```
-./
-├── Cargo.toml
-├── src/
-│   ├── api/                      # Actix routes, handlers, async reindex jobs
-│   ├── cache/                    # L2 memory cache + Redis L3 cache
-│   ├── monitoring/               # Metrics, OpenTelemetry, rate limit middleware
-│   ├── db/schema_init.rs         # DB schema bootstrap (rusqlite)
-│   ├── config.rs                 # ApiConfig from env
-│   ├── retriever.rs              # Tantivy index + vector storage and metrics
-│   ├── index.rs                  # Indexing pipeline over ./documents
-│   ├── path_manager.rs           # Paths for data/index/vector files
-│   └── lib.rs                    # Module declarations
-├── tests/                        # Integration and monitoring tests
-├── frontend/
-│   └── fro/
-│       ├── Dioxus.toml
-│       ├── package.json          # Tailwind scripts (css:build, css:watch)
-│       ├── tailwind.config.js
-│       └── src/                  # Dioxus components/pages
-├── documents/                    # Uploads (runtime)
-├── tantivy_index/                # Local Tantivy index (runtime)
-├── data/ db/ cache/ logs/        # Runtime data and logs
-└── install.sh installers/ scripts/
+ag/
+├── src/                          # Main Rust backend source
+│   ├── api/                      # HTTP route handlers
+│   │   ├── mod.rs                # Main API server setup and core routes
+│   │   ├── agent_routes.rs       # Agent goal/episode/reflection endpoints
+│   │   ├── memory_routes.rs      # Memory chunk storage/search
+│   │   ├── tool_routes.rs        # Tool selection and execution
+│   │   ├── composer_routes.rs    # Tool chain composition
+│   │   └── decision_engine_routes.rs  # Query planning and decision logic
+│   ├── monitoring/               # Observability and metrics
+│   │   ├── metrics.rs            # Prometheus metrics definitions
+│   │   ├── tracing_config.rs     # Tracing/logging setup
+│   │   ├── otel_config.rs        # OpenTelemetry configuration
+│   │   ├── rate_limit_middleware.rs  # Rate limiting middleware
+│   │   ├── health.rs             # Health check logic
+│   │   └── alerting_hooks.rs     # Webhook alerts for reindex events
+│   ├── cache/                    # Caching layers
+│   │   ├── cache_layer.rs        # L2 in-memory LRU cache
+│   │   ├── redis_cache.rs        # L3 Redis cache
+│   │   └── invalidation.rs       # Cache invalidation logic
+│   ├── memory/                   # Agent memory system
+│   │   ├── agent.rs              # Agent with goals, tasks, episodes
+│   │   ├── vector_store.rs       # Vector storage and similarity search
+│   │   ├── chunker.rs            # Semantic chunking
+│   │   ├── decision_engine.rs    # Query planning and execution
+│   │   └── llm_provider.rs       # LLM integration (Ollama)
+│   ├── tools/                    # Tool execution framework
+│   │   ├── mod.rs                # Tool registry and base traits
+│   │   ├── tool_executor.rs      # Tool execution engine
+│   │   ├── tool_selector.rs      # Tool selection logic
+│   │   ├── tool_composer.rs      # Tool chain composition
+│   │   ├── calculator.rs         # Calculator tool
+│   │   ├── web_search.rs         # Web search tool
+│   │   └── url_fetch.rs          # URL fetching tool
+│   ├── db/                       # Database initialization
+│   │   └── schema_init.rs        # SQLite schema setup
+│   ├── security/                 # Security utilities
+│   │   └── rate_limiter.rs       # Token bucket rate limiter
+│   ├── installer/                # Installation utilities
+│   ├── main.rs                   # Application entry point
+│   ├── lib.rs                    # Library module declarations
+│   ├── config.rs                 # Configuration from environment
+│   ├── retriever.rs              # Core search and indexing engine
+│   ├── index.rs                  # Document indexing pipeline
+│   ├── embedder.rs               # Text embedding generation
+│   ├── path_manager.rs           # Path management for data/index files
+│   ├── agent.rs                  # Simple agent implementation
+│   └── agent_memory.rs           # Agent memory persistence
+├── tests/                        # Integration tests
+│   ├── retriever_tests.rs        # Retriever functionality tests
+│   ├── rate_limit_middleware_integration_test.rs  # Rate limit tests
+│   ├── test_cache_layer.rs       # Cache layer tests
+│   ├── trace_propagation.rs      # Distributed tracing tests
+│   └── w3c_trace_context.rs      # W3C trace context tests
+├── frontend/fro/                 # Dioxus frontend
+│   ├── src/                      # Frontend Rust source
+│   ├── assets/                   # Static assets
+│   ├── public/                   # Public files (CSS output)
+│   ├── package.json              # npm scripts for Tailwind
+│   ├── tailwind.config.js        # Tailwind configuration
+│   ├── Dioxus.toml               # Dioxus build config
+│   └── Cargo.toml                # Frontend dependencies
+├── documents/                    # Uploaded documents (runtime)
+├── tantivy_index/                # Tantivy index files (runtime)
+├── data/                         # Vector storage and data files (runtime)
+├── db/                           # SQLite databases (runtime)
+├── cache/                        # Cache files (runtime)
+├── logs/                         # Application logs (runtime)
+├── Cargo.toml                    # Backend dependencies and features
+├── build.rs                      # Build-time metadata (git SHA, build time)
+└── .env.example                  # Environment variable examples
 ```
+
+---
 
 ### Key Files to Know
 
 | File | Purpose | When You'd Touch It |
 |------|---------|---------------------|
-| src/main.rs | Backend entrypoint; sets up tracing, OTEL, DB, retriever; starts Actix server | Change startup behavior, background indexing, telemetry |
-| src/api/mod.rs | HTTP routes for health/ready, upload, search, reindex (sync/async), memory, agent | Add endpoints or adjust rate limits/CORS |
-| src/retriever.rs | Core search/index and vector store logic; metrics; caches; atomic reindex | Modify search behavior, vector IO, caching |
-| src/index.rs | Iterates files in ./documents, extracts text, chunks, embeds, commits | Extend file types, chunking, embeddings |
-| src/monitoring/metrics.rs | Prometheus metrics registry and exporters | Add/edit metrics |
-| src/monitoring/rate_limit_middleware.rs | Middleware with per-route rules and labels | Tune rate limits and exempt routes |
-| src/config.rs | ApiConfig from env (ports, rate limits, Redis) | Introduce new env flags or defaults |
-| frontend/fro/package.json | Tailwind CSS scripts | Update CSS build/watch scripts |
-| frontend/fro/Dioxus.toml | Dioxus web config and watcher | Adjust dev file watching |
-| frontend/fro/tailwind.config.js | Tailwind scanning paths, dark mode | Add content paths and theme |
+| `src/main.rs` | Application entry point; initializes tracing, OTLP, DB, retriever, starts Actix server | Change startup behavior, add initialization steps |
+| `src/api/mod.rs` | Main API server setup; defines all HTTP routes and middleware | Add new endpoints, modify CORS, adjust rate limits |
+| `src/retriever.rs` | Core search engine; Tantivy index, vector storage, caching, metrics | Modify search logic, add vector operations, tune caching |
+| `src/index.rs` | Document indexing pipeline; file scanning, text extraction, chunking | Add support for new file types, change chunking strategy |
+| `src/config.rs` | Configuration from environment variables | Add new config options, change defaults |
+| `src/monitoring/metrics.rs` | Prometheus metrics definitions and export | Add new metrics, modify histogram buckets |
+| `src/monitoring/rate_limit_middleware.rs` | Rate limiting middleware with per-route rules | Adjust rate limits, add route-specific rules |
+| `src/monitoring/otel_config.rs` | OpenTelemetry setup and OTLP exporter | Configure tracing backends, adjust sampling |
+| `src/cache/redis_cache.rs` | Redis L3 cache implementation | Modify Redis connection, adjust TTL |
+| `src/memory/agent.rs` | Agent with goals, tasks, episodes, reflections | Extend agent capabilities, add new memory types |
+| `src/tools/mod.rs` | Tool registry and execution framework | Register new tools, modify tool interface |
+| `frontend/fro/package.json` | npm scripts for Tailwind CSS | Update CSS build/watch commands |
+| `frontend/fro/Dioxus.toml` | Dioxus build configuration | Adjust dev server settings, file watching |
+| `Cargo.toml` | Backend dependencies and feature flags | Add dependencies, enable features (e.g., `installer`) |
+| `.env.example` | Environment variable documentation | Document new env vars |
 
 ---
 
 ## 🔧 Technology Stack
 
 ### Core Technologies
-- Language: Rust (edition 2021)
-- Backend: Actix Web 4.x
-- Search/Index: Tantivy 0.24.x
-- Persistence: rusqlite 0.37 (SQLite)
-- Async runtime: Tokio 1.x
-- Telemetry: tracing, prometheus, OpenTelemetry 0.21 (+ OTLP via tonic)
-- Frontend: Dioxus (Rust) with Tailwind CSS 4.x CLI
+
+- **Language**: Rust (edition 2021) - Chosen for performance, safety, and concurrency
+- **Backend Framework**: Actix Web 4.x - High-performance async web framework
+- **Search Engine**: Tantivy 0.24.x - Full-text search library (Lucene-like)
+- **Database**: rusqlite 0.37 (SQLite) - Lightweight embedded database for metadata
+- **Async Runtime**: Tokio 1.x - Async runtime for concurrent operations
+- **Frontend**: Dioxus 0.6 - Rust-based reactive UI framework
+- **Styling**: Tailwind CSS 4.x - Utility-first CSS framework
 
 ### Key Libraries
-- llm for model interactions (placeholder usage in codebase)
-- rayon and lru for performance and caching
-- reqwest (rustls) for HTTP client utilities
-- redis (optional) for L3 cache
+
+- **llm** (1.3.4) - LLM integration for embeddings and generation
+- **prometheus** (0.13) - Metrics collection and export
+- **opentelemetry** (0.21) + **opentelemetry-otlp** (0.14) - Distributed tracing
+- **tracing** (0.1) + **tracing-subscriber** (0.3) - Structured logging and tracing
+- **redis** (0.32) - Redis client for L3 caching
+- **rayon** (1.10) - Data parallelism for batch operations
+- **lru** (0.12) - LRU cache implementation for L2 caching
+- **serde** (1.0) + **serde_json** (1.0) - Serialization/deserialization
+- **actix-cors** (0.7) - CORS middleware for API
+- **pdf-extract** (0.7) - PDF text extraction (placeholder)
 
 ### Development Tools
-- cargo (build/test)
-- dx (Dioxus CLI) for frontend serve
-- Tailwind CLI via npm scripts (frontend/fro)
+
+- **cargo** - Rust build system and package manager
+- **rustfmt** - Code formatting
+- **clippy** - Linting and code analysis
+- **dx** (Dioxus CLI) - Frontend development server
+- **npm** - Tailwind CSS build scripts
 
 ---
 
 ## 🌐 External Dependencies
 
-- Prometheus (scrapes /monitoring/metrics)
-- Optional: Redis at REDIS_URL for L3 cache
-- Optional: OpenTelemetry collector via OTLP (see src/monitoring/* OTLP files)
+### Required Services
+
+- **Tantivy Index** (local filesystem) - Full-text search index stored in `./tantivy_index`
+- **SQLite** (embedded) - Metadata storage for documents, agent memory, goals, tasks
+
+### Optional Integrations
+
+- **Redis** - L3 cache for search results (set `REDIS_ENABLED=true`)
+- **Prometheus** - Metrics scraping from `/monitoring/metrics`
+- **OpenTelemetry Collector** - Distributed tracing via OTLP (gRPC)
+- **Webhook Endpoints** - Reindex completion alerts (set `REINDEX_WEBHOOK_URL`)
+
+---
 
 ### Environment Variables
 
 ```bash
-# Server
-BACKEND_HOST=127.0.0.1
-BACKEND_PORT=3010
+# Server Configuration
+BACKEND_HOST=127.0.0.1          # Server bind address
+BACKEND_PORT=3010               # Server port
 
-# Indexing & startup
-SKIP_INITIAL_INDEXING=false
-INDEX_IN_RAM=false
+# Indexing & Startup
+SKIP_INITIAL_INDEXING=false     # Skip background indexing on startup
+INDEX_IN_RAM=false              # Use in-memory index (high memory usage)
 
-# Rate limiting
-RATE_LIMIT_ENABLED=false
-RATE_LIMIT_QPS=1.0
-RATE_LIMIT_BURST=5
-RATE_LIMIT_SEARCH_QPS=
-RATE_LIMIT_SEARCH_BURST=
-RATE_LIMIT_UPLOAD_QPS=
-RATE_LIMIT_UPLOAD_BURST=
-RATE_LIMIT_LRU_CAPACITY=1024
-TRUST_PROXY=false
+# Rate Limiting
+RATE_LIMIT_ENABLED=false        # Enable rate limiting middleware
+RATE_LIMIT_QPS=1.0              # Global queries per second limit
+RATE_LIMIT_BURST=5              # Global burst capacity
+RATE_LIMIT_SEARCH_QPS=          # Search-specific QPS (optional)
+RATE_LIMIT_SEARCH_BURST=        # Search-specific burst (optional)
+RATE_LIMIT_UPLOAD_QPS=          # Upload-specific QPS (optional)
+RATE_LIMIT_UPLOAD_BURST=        # Upload-specific burst (optional)
+RATE_LIMIT_LRU_CAPACITY=1024    # LRU cache size for rate limiter
+TRUST_PROXY=false               # Trust X-Forwarded-For headers
 
-# Redis (optional)
-REDIS_ENABLED=false
-REDIS_URL=redis://127.0.0.1:6379/
-REDIS_TTL=3600
+# Redis L3 Cache
+REDIS_ENABLED=false             # Enable Redis L3 cache
+REDIS_URL=redis://127.0.0.1:6379/  # Redis connection URL
+REDIS_TTL=3600                  # Cache TTL in seconds
+
+# Monitoring & Tracing
+RUST_LOG=info,tantivy=warn      # Log level configuration
+SEARCH_HISTO_BUCKETS=1,2,5,10,20,50,100,250,500,1000  # Search latency histogram buckets (ms)
+REINDEX_HISTO_BUCKETS=50,100,250,500,1000,2000,5000,10000  # Reindex latency buckets (ms)
+
+# Alerting
+REINDEX_WEBHOOK_URL=            # Webhook URL for reindex completion alerts
+
+# OpenTelemetry (set via otel_config.rs)
+OTEL_EXPORTER_OTLP_ENDPOINT=    # OTLP collector endpoint
+OTEL_SERVICE_NAME=ag            # Service name for traces
 ```
 
 ---
 
 ## 🔄 Common Workflows
 
-### Local backend development
-1. Set env vars as needed (e.g., RUST_LOG, BACKEND_PORT).
-2. cargo run
-3. Hit http://127.0.0.1:3010/monitoring/health and /monitoring/metrics.
+### Local Development Workflow
 
-### Index local documents
-1. Place .txt or .pdf files under ./documents
-2. POST /reindex or POST /reindex/async
-3. GET /index/info and /documents to verify
+1. **Set up environment**:
+   ```bash
+   cp .env.example .env
+   # Edit .env with your configuration
+   ```
 
-### Frontend workflow
-1. cd frontend/fro
-2. npm run css:watch (Tailwind)
-3. dx serve --platform web
+2. **Start backend**:
+   ```bash
+   cargo run
+   # Server starts on http://127.0.0.1:3010
+   ```
+
+3. **Verify health**:
+   ```bash
+   curl http://127.0.0.1:3010/monitoring/health
+   curl http://127.0.0.1:3010/monitoring/metrics
+   ```
+
+4. **Start frontend** (in separate terminal):
+   ```bash
+   cd frontend/fro
+   npm run css:watch &  # Watch Tailwind CSS
+   dx serve --platform web
+   ```
+
+**Code path**: `main.rs` → `start_api_server()` → Actix Web routes
+
+---
+
+### Document Indexing Workflow
+
+1. **Upload documents**:
+   ```bash
+   curl -F "file=@document.txt" http://127.0.0.1:3010/upload
+   ```
+
+2. **Trigger reindex** (synchronous):
+   ```bash
+   curl -X POST http://127.0.0.1:3010/reindex
+   ```
+
+3. **Or trigger async reindex**:
+   ```bash
+   curl -X POST http://127.0.0.1:3010/reindex/async
+   # Returns job_id
+   curl http://127.0.0.1:3010/reindex/status/{job_id}
+   ```
+
+4. **Verify indexing**:
+   ```bash
+   curl http://127.0.0.1:3010/index/info
+   curl http://127.0.0.1:3010/documents
+   ```
+
+**Code path**: `POST /upload` → `upload_document_inner()` → files saved to `./documents` → `POST /reindex` → `index_all_documents()` → `retriever.index_chunk()` → Tantivy + `vectors.json`
+
+---
+
+### Search Workflow
+
+1. **Perform search**:
+   ```bash
+   curl "http://127.0.0.1:3010/search?q=rust+programming"
+   ```
+
+2. **Check cache metrics**:
+   ```bash
+   curl http://127.0.0.1:3010/monitoring/metrics | grep cache
+   ```
+
+**Code path**: `GET /search` → `search_documents_inner()` → `retriever.search()` → Check L2/L3 cache → Query Tantivy → Update metrics → Return results
+
+---
+
+### Agent Memory Workflow
+
+1. **Store agent memory**:
+   ```bash
+   curl -X POST http://127.0.0.1:3010/memory/store_rag \
+     -H "Content-Type: application/json" \
+     -d '{"agent_id": "agent1", "memory_type": "observation", "content": "User prefers concise answers"}'
+   ```
+
+2. **Search agent memory**:
+   ```bash
+   curl -X POST http://127.0.0.1:3010/memory/search_rag \
+     -H "Content-Type: application/json" \
+     -d '{"agent_id": "agent1", "query": "user preferences", "top_k": 5}'
+   ```
+
+3. **Recall recent memories**:
+   ```bash
+   curl -X POST http://127.0.0.1:3010/memory/recall_rag \
+     -H "Content-Type: application/json" \
+     -d '{"agent_id": "agent1", "limit": 10}'
+   ```
+
+**Code path**: `POST /memory/store_rag` → `AgentMemory::store_rag()` → SQLite insert → `POST /memory/search_rag` → `AgentMemory::search_rag()` → Vector similarity search
 
 ---
 
 ## 📈 Performance & Scale
 
-- Batch indexing supported via begin_batch/end_batch to reduce commit overhead.
-- L1/L2/L3 caching layers reduce query latency; metrics include cache hit/miss and search latency histograms.
-- Histogram buckets configurable in monitoring code; Prometheus export is text format.
+### Performance Considerations
+
+- **Caching Strategy**:
+  - L1: Query-level cache in `Retriever` (LRU)
+  - L2: In-memory LRU cache for search results
+  - L3: Optional Redis cache with configurable TTL
+  - Cache invalidation on reindex to ensure freshness
+
+- **Batch Indexing**: Uses `begin_batch()` and `end_batch()` to reduce Tantivy commit overhead during bulk indexing
+
+- **Parallel Processing**: Uses `rayon` for parallel document processing and embedding generation
+
+- **In-Memory Index**: Optional `INDEX_IN_RAM=true` for faster search (high memory usage; recommended for <100 documents)
+
+- **Rate Limiting**: Token bucket algorithm with per-route rules to prevent abuse
+
+### Monitoring
+
+- **Metrics**: Prometheus-compatible metrics at `/monitoring/metrics`:
+  - Search latency histograms (configurable buckets)
+  - Cache hit/miss rates
+  - Reindex duration
+  - Document and vector counts
+  - Rate limit rejections
+
+- **Tracing**: OpenTelemetry distributed tracing with OTLP export:
+  - Request tracing with W3C trace context propagation
+  - Span instrumentation for key operations
+  - Configurable sampling
+
+- **Health Checks**:
+  - `/monitoring/health` - Component health status
+  - `/monitoring/ready` - Readiness check for load balancers
+
+- **Alerts**: Webhook notifications for reindex completion (success/failure)
 
 ---
 
 ## 🚨 Things to Be Careful About
 
 ### 🔒 Security Considerations
-- If TRUST_PROXY is false, remote IPs are taken from the socket; only enable behind trusted proxy.
-- Upload endpoint accepts only .txt and .pdf; enforce size and auth if exposing publicly.
-- Redis and any webhook URLs should be configured via env; avoid committing secrets.
 
+- **Authentication**: No built-in authentication; deploy behind reverse proxy with auth if exposing publicly
+- **File Upload**: Only `.txt` and `.pdf` files accepted; enforce size limits and validate content
+- **Rate Limiting**: Enable `RATE_LIMIT_ENABLED=true` in production; configure per-route limits
+- **Proxy Trust**: Only set `TRUST_PROXY=true` when behind a trusted reverse proxy (e.g., nginx); otherwise, IP-based rate limiting can be bypassed
+- **Redis Security**: Use authenticated Redis connection in production; avoid exposing Redis port
+- **Secrets Management**: Never commit `.env` file; use environment variables or secret management systems
 
-*Updated at: 2025-11-15*
+### ⚠️ Operational Warnings
+
+- **In-Memory Index**: `INDEX_IN_RAM=true` loads entire index into RAM; only use for small datasets (<100 docs)
+- **Concurrent Reindex**: Only one reindex operation allowed at a time (enforced by `REINDEX_IN_PROGRESS` atomic flag)
+- **Background Indexing**: Initial indexing runs in background by default; set `SKIP_INITIAL_INDEXING=true` to disable
+- **Vector Storage**: `vectors.json` is loaded entirely into memory; large datasets may require alternative storage
+- **Cache Invalidation**: All caches (L2/L3) are invalidated on reindex; expect cache misses after reindex
+- **Database Locking**: SQLite uses file-based locking; avoid concurrent writes from multiple processes
+
+### 🐛 Known Limitations
+
+- **PDF Parsing**: PDF text extraction is placeholder ("PDF parsing not implemented"); integrate `pdf-extract` or similar
+- **Embedding Model**: Uses simple embedding via `llm` crate; consider dedicated embedding models for production
+- **Vector Search**: Basic cosine similarity; no HNSW or other approximate nearest neighbor algorithms
+- **Scalability**: Single-node architecture; horizontal scaling requires external index (e.g., Elasticsearch) and distributed cache
+
+---
+
+*Last updated: 2025-01-16 (based on commit f3baed9)*

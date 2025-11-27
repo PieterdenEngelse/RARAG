@@ -2335,6 +2335,129 @@ added
     AgBackendDown
     HighRequestLatency (p99 > 500ms)
 
+    Scenario	Console	Journald	File Logs	Loki
+systemctl start ag	✅	✅	✅	✅ Both sources
+cargo run	✅	❌	✅	✅ File source
+./target/release/ag	✅	❌	✅	✅ File source
+Development/testing	✅	❌	✅	✅ File source
+
+
+
 **Time to Complete**: ~15 minutes
 
 **Next Phase**: Phase 18 - Grafana Dashboards for Logs (optional)
+
+Dashboard	Query	Description
+AG Service	{job="systemd-journal", systemd_unit="ag.service"}	Your AG application logs
+AG Errors Only	{job="systemd-journal", systemd_unit="ag.service", is_error="true"}	Only AG errors
+Monitoring Stack	{job="systemd-monitoring"}	Loki, Prometheus, Grafana, OTEL, Alertmanager
+Monitoring Errors	{job="systemd-monitoring", is_error="true"}	Monitoring stack errors
+System Errors	{job="system-errors"}	Critical system errors (priority 0-3)
+Kernel Logs	{job="kernel"}	Kernel messages
+Kernel Errors	{job="kernel", is_error="true"}	Kernel errors/panics
+Auth Logs	{job="auth"}	SSH, sudo, login attempts
+Failed Logins	{job="auth", auth_event="Failed password"}	Failed authentication
+Syslog	{job="syslog"}	General system logs
+All Errors	{is_error="true"}	All errors across all sources
+
+Phase 19: Production Hardening - Total Steps
+
+✅ Generate TLS certificates
+✅ Enable TLS on Prometheus
+✅ Enable TLS on Loki
+⏭️ Enable TLS on Grafana (UI-based)
+✅ Update Vector for HTTPS Loki
+✅ Update Prometheus scrape jobs for HTTPS
+⏭️ Enable TLS on ag-backend
+⏭️ Update all service interconnects to HTTPS
+⏭️ Certificate rotation strategy
+⏭️ Verify end-to-end TLS
+
+#6: Trace-based Alerting
+
+Query Tempo for anomalies: ~100ms per alert check
+Every 30s = 2 queries/min
+
+7: Resource Attribution
+
+Memory sampling during trace: +1-2% peak memory
+CPU sampling: +0.5% CPU during queries
+Impact: +2% memory, +0.5% CPU
+
+#8: Audit Trail Logging
+
+Extra log entry per trace: +1 write to Loki
+Loki ingestion: +0.1KB/request
+At 100 req/s = 10KB/s to Loki
+Impact: +10-15% Loki disk I/O
+
+# Alert Examples
+
+### High Latency Alert
+
+```json
+{
+  "anomaly_type": "high_latency",
+  "trace_id": "abc123...",
+  "span_name": "GET /api/search",
+  "duration_ms": 1500,
+  "affected_traces": 1,
+  "total_traces": 50,
+  "timestamp": 1705420800
+}
+```
+
+### Error Status Alert
+
+```json
+{
+  "anomaly_type": "error_status",
+  "trace_id": "def456...",
+  "span_name": "POST /upload",
+  "error_message": "Trace contains error status",
+  "affected_traces": 1,
+  "total_traces": 50,
+  "timestamp": 1705420800
+}
+```
+
+### High Error Rate Alert
+
+```json
+{
+  "anomaly_type": "high_error_rate",
+  "affected_traces": 10,
+  "total_traces": 100,
+  "timestamp": 1705420800
+}
+```
+Tempo 2.9.0 running
+
+Ports: 3200 (HTTPS API), 9095 (gRPC), 4317 (OTLP)
+Loopback alias: 10.255.0.1/32
+memberlist enabled with advertise_addr: 10.255.0.1
+Config: /etc/tempo/config.yml
+
+INSTALLER IMPACT:
+
+Loopback alias must be created before Tempo starts
+Config path: /etc/tempo/config.yml
+TLS certs required at /etc/tempo/tls/tempo.crt and .key
+systemd service: tempo.service
+
+AX9:/etc/tempo$ ip addr show lo | grep 10.255.0.1
+    inet 10.255.0.1/32 scope global lo
+pde@pde-BOHB-WAX9:/etc/tempo$ 
+
+Ready for Phase 17 (OTel Collector integration).
+
+Once AG is running with alerting enabled:
+
+    Prometheus (or your metrics scraper) will see:
+        trace_anomalies_total{type="high_latency"}
+        trace_anomalies_total{type="error_status"}
+        trace_anomalies_total{type="high_error_rate"}
+        trace_alert_checks_total{status="ok"|"error"}
+
+
+

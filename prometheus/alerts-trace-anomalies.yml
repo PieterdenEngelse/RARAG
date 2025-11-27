@@ -1,0 +1,67 @@
+groups:
+  - name: trace_anomalies
+    rules:
+      - alert: TraceHighLatencyAnomalies
+        expr: rate(trace_anomalies_total{type="high_latency"}[5m]) > 0
+        for: 1m
+        labels:
+          severity: warning
+          service: ag-backend
+          component: trace-alerting
+        annotations:
+          summary: "High latency trace anomalies detected"
+          description: |
+            The trace-based alerting loop is reporting high-latency spans.
+            Metric: trace_anomalies_total{type="high_latency"}
+
+      - alert: TraceErrorStatusAnomalies
+        expr: rate(trace_anomalies_total{type="error_status"}[5m]) > 0
+        for: 1m
+        labels:
+          severity: warning
+          service: ag-backend
+          component: trace-alerting
+        annotations:
+          summary: "Error-status trace anomalies detected"
+          description: |
+            The trace-based alerting loop is reporting spans with error status.
+            Metric: trace_anomalies_total{type="error_status"}
+
+      - alert: TraceHighErrorRateAnomalies
+        expr: rate(trace_anomalies_total{type="high_error_rate"}[5m]) > 0
+        for: 1m
+        labels:
+          severity: critical
+          service: ag-backend
+          component: trace-alerting
+        annotations:
+          summary: "High trace error rate detected"
+          description: |
+            The trace-based alerting loop reports that the error rate exceeded the configured threshold.
+            Metric: trace_anomalies_total{type="high_error_rate"}
+
+      - alert: TraceAlertChecksFailing
+        expr: rate(trace_alert_checks_total{status="error"}[5m]) > 0
+        for: 2m
+        labels:
+          severity: critical
+          service: ag-backend
+          component: trace-alerting
+        annotations:
+          summary: "Trace alerting checks are failing"
+          description: |
+            The trace alerting background task is encountering errors when querying Tempo.
+            Metric: trace_alert_checks_total{status="error"}
+
+      - alert: TraceAlertingDown
+        expr: absent(trace_alert_checks_total)
+        for: 5m
+        labels:
+          severity: critical
+          service: ag-backend
+          component: trace-alerting
+        annotations:
+          summary: "Trace alerting metrics missing"
+          description: |
+            Prometheus has not seen trace_alert_checks_total for at least 5 minutes.
+            The trace-based alerting task may not be running.

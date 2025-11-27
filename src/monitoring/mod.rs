@@ -10,7 +10,6 @@
 //! - Creates ~/.agentic-rag/logs/ directory
 //! - Requires RUST_LOG environment variable
 //! - Requires MONITORING_ENABLED=true environment variable
-
 pub mod config;
 pub mod metrics;
 pub mod tracing_config;
@@ -23,12 +22,15 @@ pub mod config_phase15;
 pub mod alerting_hooks;
 pub mod distributed_tracing;
 pub mod trace_middleware;
+pub mod trace_context;
 pub mod performance_analysis;
 pub mod rate_limit_middleware;
 pub mod otel_config;
-
+pub mod trace_alerting;
+pub mod resource_attribution;
 
 pub use config::MonitoringConfig;
+pub use trace_context::{set_trace_id, get_trace_id, clear_trace_id};
 pub use crate::monitoring::metrics::{
     REGISTRY,
     APP_INFO,
@@ -51,6 +53,8 @@ pub use crate::monitoring::metrics::{
 pub use health::HealthStatus;
 pub use histogram_config::HistogramBuckets;
 pub use alerting_hooks::{AlertingHooksConfig, ReindexCompletionEvent};
+pub use trace_alerting::{TraceAlertingConfig, TraceAnomalyEvent, start_trace_alerting};
+pub use resource_attribution::{ResourceAttributionConfig, start_resource_attribution};
 
 use std::sync::Arc;
 use std::time::Instant;
@@ -73,28 +77,23 @@ impl MonitoringContext {
     pub fn new(config: MonitoringConfig) -> Result<Self, Box<dyn std::error::Error>> {
         // Initialize tracing (logging)
         let _guard = tracing_config::init_tracing(&config)?;
-        
         // Metrics registry initialized on first use by Lazy statics
-
         // Initialize health tracker
         let health = Arc::new(health::HealthTracker::new());
-        
         let startup_time = Instant::now();
-        
         // Log effective histogram buckets at startup for visibility
         let search_buckets = crate::monitoring::metrics::__test_parse_buckets_env("SEARCH_HISTO_BUCKETS")
             .unwrap_or(vec![1.0,2.0,5.0,10.0,20.0,50.0,100.0,250.0,500.0,1000.0]);
         let reindex_buckets = crate::monitoring::metrics::__test_parse_buckets_env("REINDEX_HISTO_BUCKETS")
             .unwrap_or(vec![50.0,100.0,250.0,500.0,1000.0,2000.0,5000.0,10000.0]);
         tracing::info!(?search_buckets, ?reindex_buckets, "Monitoring system initialized with histogram buckets");
-        
         Ok(Self {
             config,
             health,
             startup_time,
         })
     }
-    
+
     /// Record startup completion
     /// 
     /// INSTALLER IMPACT:
@@ -105,13 +104,12 @@ impl MonitoringContext {
         let startup_duration = self.startup_time.elapsed();
         // You can record startup duration as a counter or gauge in Prometheus if desired.
         self.health.mark_ready();
-        
         tracing::info!(
             duration_ms = startup_duration.as_millis(),
             "Application startup complete"
         );
     }
-    
+
     /// Get current health status
     pub fn health_status(&self) -> HealthStatus {
         self.health.get_status()
@@ -121,7 +119,7 @@ impl MonitoringContext {
 #[cfg(test)]
 mod tests {
     use super::*;
-    
+
     #[test]
     fn test_monitoring_context_creation() {
         let config = MonitoringConfig::default();

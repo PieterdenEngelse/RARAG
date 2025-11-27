@@ -45,6 +45,30 @@ async fn main() -> std::io::Result<()> {
     debug!("Monitoring enabled: {}", monitoring_config.enabled);
     
     // ─────────────────────────────────────────────────────────────
+    // PHASE 1.5: Start Trace-Based Alerting (Background Task)
+    // ─────────────────────────────────────────────────────────────
+    
+    let trace_alert_config = ag::monitoring::TraceAlertingConfig::from_env();
+    if trace_alert_config.is_enabled() {
+        let _alert_handle = ag::monitoring::start_trace_alerting(trace_alert_config);
+        info!("🔔 Trace-based alerting started");
+    } else {
+        debug!("Trace-based alerting disabled (set TEMPO_ENABLED=true to enable)");
+    }
+    
+    // ─────────────────────────────────────────────────────────────
+    // PHASE 1.6: Start Resource Attribution (Background Task)
+    // ─────────────────────────────────────────────────────────────
+    
+    let resource_config = ag::monitoring::ResourceAttributionConfig::from_env();
+    if resource_config.is_enabled() {
+        let _resource_handle = ag::monitoring::start_resource_attribution(resource_config);
+        info!("📊 Resource attribution started");
+    } else {
+        debug!("Resource attribution disabled (set RESOURCE_ATTRIBUTION_ENABLED=false to disable)");
+    }
+    
+    // ─────────────────────────────────────────────────────────────
     // PHASE 2: Load Configuration with Tracing
     // ─────────────────────────────────────────────────────────────
     debug!("Monitoring config: enabled={}, file_logging={}", 

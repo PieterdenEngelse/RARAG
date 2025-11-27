@@ -6,6 +6,7 @@ use actix_web::{dev::{ServiceRequest, ServiceResponse}, Error, http::header};
 use tracing::{info_span, Instrument};
 use opentelemetry::{global, trace::{Tracer, Status, Span}};
 use crate::monitoring::metrics::REQUEST_LATENCY_MS;
+use crate::monitoring::{set_trace_id, clear_trace_id};
 
 pub struct TraceMiddleware;
 
@@ -62,12 +63,15 @@ where
             .unwrap_or("unknown")
             .to_string();
 
+        // Set trace_id in context for all logs
+        set_trace_id(request_id.clone());
+
         let span = info_span!(
             "http_request",
             method = %method,
             path = %route_label,
             client_ip = %client_ip,
-            request_id = %request_id,
+            trace_id = %request_id,
             user_agent = %user_agent
         );
 
@@ -77,7 +81,7 @@ where
         otel_span.set_attribute(opentelemetry::KeyValue::new("http.method", method.clone()));
         otel_span.set_attribute(opentelemetry::KeyValue::new("http.url", route_label.clone()));
         otel_span.set_attribute(opentelemetry::KeyValue::new("http.client_ip", client_ip.clone()));
-        otel_span.set_attribute(opentelemetry::KeyValue::new("http.request_id", request_id.clone()));
+        otel_span.set_attribute(opentelemetry::KeyValue::new("trace.id", request_id.clone()));
         otel_span.set_attribute(opentelemetry::KeyValue::new("http.user_agent", user_agent.clone()));
 
         let start = Instant::now();
@@ -109,13 +113,14 @@ where
                     path = %route_label,
                     status = status,
                     duration_ms = duration_ms,
-                    request_id = %request_id,
+                    trace_id = %request_id,
                     "request completed"
                 );
             } else {
                 otel_span.set_status(Status::Error { description: "Request failed".into() });
             }
             
+            clear_trace_id();
             res
         })
     }
