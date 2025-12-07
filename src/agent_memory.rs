@@ -1,5 +1,5 @@
 use rusqlite::{Connection, Result};
-use serde::{Serialize, Deserialize};
+use serde::{Deserialize, Serialize};
 
 pub struct AgentMemory {
     conn: Connection,
@@ -66,7 +66,13 @@ impl AgentMemory {
     }
 
     // RAG memory: store with embedding
-    pub fn store_rag(&self, agent_id: &str, memory_type: &str, content: &str, timestamp: &str) -> Result<()> {
+    pub fn store_rag(
+        &self,
+        agent_id: &str,
+        memory_type: &str,
+        content: &str,
+        timestamp: &str,
+    ) -> Result<()> {
         let vec = crate::embedder::embed(content);
         let vector_json = serde_json::to_string(&vec).unwrap_or("[]".to_string());
         self.conn.execute(
@@ -94,7 +100,12 @@ impl AgentMemory {
         Ok(rows.filter_map(Result::ok).collect())
     }
 
-    pub fn search_rag(&self, agent_id: &str, query: &str, top_k: usize) -> Result<Vec<MemorySearchResult>> {
+    pub fn search_rag(
+        &self,
+        agent_id: &str,
+        query: &str,
+        top_k: usize,
+    ) -> Result<Vec<MemorySearchResult>> {
         // Load all memory vectors for this agent (keep it simple for now)
         let mut stmt = self.conn.prepare(
             "SELECT id, agent_id, memory_type, content, timestamp, vector FROM rag_memory WHERE agent_id = ?1",
@@ -107,24 +118,44 @@ impl AgentMemory {
             let timestamp: String = row.get(4)?;
             let vector_json: String = row.get(5)?;
             let vector: Vec<f32> = serde_json::from_str(&vector_json).unwrap_or_default();
-            Ok((MemoryItem { id, agent_id, memory_type, content, timestamp }, vector))
+            Ok((
+                MemoryItem {
+                    id,
+                    agent_id,
+                    memory_type,
+                    content,
+                    timestamp,
+                },
+                vector,
+            ))
         })?;
 
         let items: Vec<(MemoryItem, Vec<f32>)> = rows.filter_map(Result::ok).collect();
         let q_vec = crate::embedder::embed(query);
-        let mut scored: Vec<MemorySearchResult> = items.into_iter().map(|(item, vec)| {
-            let score = cosine_similarity(&q_vec, &vec);
-            MemorySearchResult { item, score }
-        }).collect();
-        scored.sort_by(|a, b| b.score.partial_cmp(&a.score).unwrap_or(std::cmp::Ordering::Equal));
+        let mut scored: Vec<MemorySearchResult> = items
+            .into_iter()
+            .map(|(item, vec)| {
+                let score = cosine_similarity(&q_vec, &vec);
+                MemorySearchResult { item, score }
+            })
+            .collect();
+        scored.sort_by(|a, b| {
+            b.score
+                .partial_cmp(&a.score)
+                .unwrap_or(std::cmp::Ordering::Equal)
+        });
         scored.truncate(top_k);
         Ok(scored)
     }
 }
 
 fn cosine_similarity(a: &[f32], b: &[f32]) -> f32 {
-    let dot: f32 = a.iter().zip(b.iter()).map(|(x,y)| x*y).sum();
-    let ma: f32 = a.iter().map(|x| x*x).sum::<f32>().sqrt();
-    let mb: f32 = b.iter().map(|x| x*x).sum::<f32>().sqrt();
-    if ma == 0.0 || mb == 0.0 { 0.0 } else { dot / (ma*mb) }
+    let dot: f32 = a.iter().zip(b.iter()).map(|(x, y)| x * y).sum();
+    let ma: f32 = a.iter().map(|x| x * x).sum::<f32>().sqrt();
+    let mb: f32 = b.iter().map(|x| x * x).sum::<f32>().sqrt();
+    if ma == 0.0 || mb == 0.0 {
+        0.0
+    } else {
+        dot / (ma * mb)
+    }
 }

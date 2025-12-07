@@ -2,9 +2,9 @@
 // Phase 13.1.0a: Installer Error Handling
 // Version: 13.1.0
 
+use serde_json;
 use std::io;
 use thiserror::Error;
-use serde_json;
 
 /// Result type for installer operations
 pub type InstallerResult<T> = Result<T, InstallerError>;
@@ -118,10 +118,10 @@ pub enum InstallerError {
 
     #[error("IO error: {0}")]
     IoError(String),
-    
+
     #[error("Serialization error: {0}")]
     SerializationError(String),
-    
+
     #[error("Validation error: {0}")]
     ValidationError(String),
 
@@ -138,7 +138,10 @@ impl InstallerError {
                 format!("Try running with sudo: sudo {}", msg)
             }
             InstallerError::PortInUse { port } => {
-                format!("Port {} is in use. Kill the process or use a different port.", port)
+                format!(
+                    "Port {} is in use. Kill the process or use a different port.",
+                    port
+                )
             }
             InstallerError::CommandNotFound { hint, .. } => hint.clone(),
             _ => "Check the logs for more details.".to_string(),

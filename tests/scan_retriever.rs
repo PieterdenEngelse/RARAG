@@ -1,6 +1,6 @@
-use walkdir::WalkDir;
-use std::fs;
 use regex::Regex;
+use std::fs;
+use walkdir::WalkDir;
 
 fn main() {
     let pattern = Regex::new(r"Arc\s*<\s*Mutex\s*<\s*Retriever\s*>>").unwrap();

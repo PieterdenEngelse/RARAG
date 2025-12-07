@@ -3,8 +3,8 @@
 // Version: 13.1.2
 
 use crate::installer::{InstallLogger, InstallerError, InstallerResult};
-use std::time::{Duration, SystemTime};
 use std::net::TcpStream;
+use std::time::{Duration, SystemTime};
 
 /// Health check result
 #[derive(Debug, Clone)]
@@ -128,7 +128,8 @@ impl HealthMonitor {
             let status = self.check_all();
 
             if status.backend_healthy && status.frontend_healthy && status.database_healthy {
-                self.logger.info(&format!("✓ All services healthy (attempt {})", attempt));
+                self.logger
+                    .info(&format!("✓ All services healthy (attempt {})", attempt));
                 return Ok(status);
             }
 
@@ -158,11 +159,19 @@ impl HealthMonitor {
         ));
         self.logger.info(&format!(
             "  Frontend: {}",
-            if status.frontend_healthy { "✓" } else { "✗" }
+            if status.frontend_healthy {
+                "✓"
+            } else {
+                "✗"
+            }
         ));
         self.logger.info(&format!(
             "  Database: {}",
-            if status.database_healthy { "✓" } else { "✗" }
+            if status.database_healthy {
+                "✓"
+            } else {
+                "✗"
+            }
         ));
 
         if let Some(failure) = &status.last_failure {

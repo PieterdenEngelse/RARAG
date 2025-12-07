@@ -1,8 +1,8 @@
 // src/tools/web_search.rs
 // Phase 9: Web Search Tool Implementation
 
+use crate::tools::{Tool, ToolMetadata, ToolResult, ToolType};
 use async_trait::async_trait;
-use crate::tools::{Tool, ToolType, ToolResult, ToolMetadata};
 use std::time::Instant;
 
 #[derive(Debug, Clone)]

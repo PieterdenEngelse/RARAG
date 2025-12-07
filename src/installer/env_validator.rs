@@ -1,10 +1,9 @@
-
 // src/installer/env_validator.rs
 // Version: 13.1.1 - SIMPLIFIED for your AG system
 
+use crate::installer::errors::InstallerResult;
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
-use crate::installer::errors::InstallerResult;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PreInstallReport {
@@ -17,7 +16,10 @@ pub struct PreInstallReport {
 
 impl PreInstallReport {
     pub fn display(&self) -> String {
-        format!("Pre-Install: {} passed, {} warnings", self.passed, self.warnings)
+        format!(
+            "Pre-Install: {} passed, {} warnings",
+            self.passed, self.warnings
+        )
     }
 }
 

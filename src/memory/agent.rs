@@ -2,15 +2,15 @@
 // Phase 6: Agent Memory Layer
 // Episodic memory, goal tracking, reflection mechanisms
 
-use rusqlite::{Connection, Result as SqlResult, params};
+use chrono::Utc;
+use rusqlite::{params, Connection, Result as SqlResult};
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 use tracing::{debug, info};
-use chrono::Utc;
 use uuid::Uuid;
 
-use crate::memory::{VectorStore, VectorRecord};
 use crate::embedder::EmbeddingService;
+use crate::memory::{VectorRecord, VectorStore};
 
 /// Agent state and identity
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -201,7 +201,7 @@ impl AgentMemoryLayer {
             CREATE INDEX IF NOT EXISTS idx_tasks_goal ON tasks(goal_id);
             CREATE INDEX IF NOT EXISTS idx_episodes_agent ON episodes(agent_id);
             CREATE INDEX IF NOT EXISTS idx_reflections_agent ON reflections(agent_id);
-            "
+            ",
         )?;
 
         Ok(())
@@ -320,7 +320,7 @@ impl AgentMemoryLayer {
         for result in results {
             let mut stmt = conn.prepare(
                 "SELECT id, agent_id, query, response, context_chunks_used, success, created_at 
-                 FROM episodes WHERE id = ?1"
+                 FROM episodes WHERE id = ?1",
             )?;
             let episode = stmt.query_row(params![&result.chunk_id], |row| {
                 Ok(Episode {
@@ -347,13 +347,14 @@ impl AgentMemoryLayer {
         // Get recent episodes
         let mut stmt = conn.prepare(
             "SELECT COUNT(*), SUM(CASE WHEN success = 1 THEN 1 ELSE 0 END) 
-             FROM episodes WHERE agent_id = ?1 AND created_at > ?2"
+             FROM episodes WHERE agent_id = ?1 AND created_at > ?2",
         )?;
 
         let one_day_ago = Utc::now().timestamp() - (24 * 3600);
-        let (total, successful): (usize, usize) = stmt.query_row(params![&self.agent.id, one_day_ago], |row| {
-            Ok((row.get(0)?, row.get(1).unwrap_or(0)))
-        })?;
+        let (total, successful): (usize, usize) = stmt
+            .query_row(params![&self.agent.id, one_day_ago], |row| {
+                Ok((row.get(0)?, row.get(1).unwrap_or(0)))
+            })?;
 
         let success_rate = if total > 0 {
             (successful as f32 / total as f32) * 100.0
@@ -398,7 +399,7 @@ impl AgentMemoryLayer {
         let conn = Connection::open(&self.db_path)?;
         let mut stmt = conn.prepare(
             "SELECT id, agent_id, goal, status, created_at, completed_at FROM goals 
-             WHERE agent_id = ?1 AND status = ?2"
+             WHERE agent_id = ?1 AND status = ?2",
         )?;
 
         let goals = stmt.query_map(params![&self.agent.id, "active"], |row| {
@@ -425,7 +426,7 @@ impl AgentMemoryLayer {
         // Get recent episodes
         let mut stmt = conn.prepare(
             "SELECT id, agent_id, query, response, context_chunks_used, success, created_at 
-             FROM episodes WHERE agent_id = ?1 ORDER BY created_at DESC LIMIT 10"
+             FROM episodes WHERE agent_id = ?1 ORDER BY created_at DESC LIMIT 10",
         )?;
         let episodes = stmt.query_map(params![&self.agent.id], |row| {
             Ok(Episode {
@@ -442,7 +443,7 @@ impl AgentMemoryLayer {
         // Get recent reflections
         let mut stmt = conn.prepare(
             "SELECT id, agent_id, reflection_type, insight, created_at 
-             FROM reflections WHERE agent_id = ?1 ORDER BY created_at DESC LIMIT 5"
+             FROM reflections WHERE agent_id = ?1 ORDER BY created_at DESC LIMIT 5",
         )?;
         let reflections = stmt.query_map(params![&self.agent.id], |row| {
             Ok(Reflection {
@@ -500,7 +501,8 @@ mod tests {
             db_path,
             vector_store,
             embedding_service,
-        ).unwrap();
+        )
+        .unwrap();
 
         (memory, temp_file)
     }
@@ -515,8 +517,10 @@ mod tests {
     #[test]
     fn test_set_and_get_goals() {
         let (memory, _temp) = create_test_memory();
-        
-        let goal = memory.set_goal("Find information about Rust".to_string()).unwrap();
+
+        let goal = memory
+            .set_goal("Find information about Rust".to_string())
+            .unwrap();
         assert_eq!(goal.status, GoalStatus::Active);
 
         let goals = memory.get_active_goals().unwrap();
@@ -527,7 +531,7 @@ mod tests {
     #[test]
     fn test_complete_goal() {
         let (memory, _temp) = create_test_memory();
-        
+
         let goal = memory.set_goal("Test goal".to_string()).unwrap();
         memory.complete_goal(&goal.id).unwrap();
 
@@ -538,13 +542,16 @@ mod tests {
     #[tokio::test]
     async fn test_record_episode() {
         let (memory, _temp) = create_test_memory();
-        
-        let episode = memory.record_episode(
-            "What is Rust?".to_string(),
-            "Rust is a systems programming language.".to_string(),
-            3,
-            true,
-        ).await.unwrap();
+
+        let episode = memory
+            .record_episode(
+                "What is Rust?".to_string(),
+                "Rust is a systems programming language.".to_string(),
+                3,
+                true,
+            )
+            .await
+            .unwrap();
 
         assert!(episode.success);
         assert_eq!(episode.context_chunks_used, 3);
@@ -553,7 +560,7 @@ mod tests {
     #[test]
     fn test_reflect_on_episodes() {
         let (memory, _temp) = create_test_memory();
-        
+
         let reflection = memory.reflect_on_episodes().unwrap();
         assert!(!reflection.insight.is_empty());
     }

@@ -2,22 +2,22 @@ pub mod path_manager;
 pub mod db {
     pub mod schema_init;
 }
-pub mod config;
-pub mod retriever;
-pub mod rules;
+pub mod agent;
 pub mod api;
-pub mod parser;
 pub mod chunker;
+pub mod config;
 pub mod embedder;
 pub mod index;
-pub mod agent;
+pub mod parser;
+pub mod retriever;
+pub mod rules;
 pub use retriever::Retriever;
 pub mod agent_memory;
-pub mod memory;  // The folder
-pub mod tools;
 pub mod cache;
 pub mod installer;
+pub mod memory; // The folder
 pub mod monitoring;
-pub use monitoring::trace_middleware;
+pub mod tools;
 pub use monitoring::performance_analysis;
+pub use monitoring::trace_middleware;
 pub mod security;

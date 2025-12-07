@@ -6,10 +6,9 @@ pub mod cache_layer;
 pub mod redis_cache;
 pub use redis_cache::RedisCache;
 
-
-use std::time::Duration;
 use async_trait::async_trait;
-use serde::{Serialize, Deserialize};
+use serde::{Deserialize, Serialize};
+use std::time::Duration;
 
 use lazy_static::lazy_static;
 use std::collections::HashMap;
@@ -20,7 +19,9 @@ pub struct ResultCache {
 
 impl ResultCache {
     pub fn new() -> Self {
-        Self { cache: HashMap::new() }
+        Self {
+            cache: HashMap::new(),
+        }
     }
 
     pub async fn get(&self, tool_type: &str, query: &str) -> Option<String> {
@@ -43,10 +44,9 @@ impl ResultCache {
 }
 
 lazy_static! {
-    pub static ref RESULT_CACHE: tokio::sync::Mutex<ResultCache> = 
+    pub static ref RESULT_CACHE: tokio::sync::Mutex<ResultCache> =
         tokio::sync::Mutex::new(ResultCache::new());
 }
-
 
 #[derive(Debug, Clone)]
 pub enum CacheLayer {
@@ -66,7 +66,12 @@ pub struct CacheConfig {
 #[async_trait]
 pub trait CacheBackend: Send + Sync {
     async fn get(&self, key: &str) -> Result<Option<Vec<u8>>, Box<dyn std::error::Error>>;
-    async fn set(&self, key: &str, value: Vec<u8>, ttl: Duration) -> Result<(), Box<dyn std::error::Error>>;
+    async fn set(
+        &self,
+        key: &str,
+        value: Vec<u8>,
+        ttl: Duration,
+    ) -> Result<(), Box<dyn std::error::Error>>;
     async fn delete(&self, key: &str) -> Result<(), Box<dyn std::error::Error>>;
     async fn clear(&self) -> Result<(), Box<dyn std::error::Error>>;
     async fn stats(&self) -> CacheStats;

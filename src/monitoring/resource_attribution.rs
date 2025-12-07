@@ -8,13 +8,13 @@
 //
 // Metrics are exposed via Prometheus for monitoring and alerting.
 
+use crate::monitoring::metrics::REGISTRY;
+use once_cell::sync::Lazy;
+use prometheus::{Gauge, IntGauge, Opts};
 use std::env;
 use std::fs;
 use std::time::{Duration, Instant};
-use once_cell::sync::Lazy;
-use prometheus::{Gauge, IntGauge, Opts};
 use tracing::{debug, warn};
-use crate::monitoring::metrics::REGISTRY;
 
 /// Configuration for resource attribution
 #[derive(Debug, Clone)]
@@ -64,51 +64,55 @@ impl ResourceAttributionConfig {
 
 /// Process memory usage in bytes
 pub static PROCESS_MEMORY_BYTES: Lazy<IntGauge> = Lazy::new(|| {
-    let g = IntGauge::with_opts(
-        Opts::new("process_memory_bytes", "Process memory usage in bytes (RSS)")
-    ).unwrap();
+    let g = IntGauge::with_opts(Opts::new(
+        "process_memory_bytes",
+        "Process memory usage in bytes (RSS)",
+    ))
+    .unwrap();
     REGISTRY.register(Box::new(g.clone())).ok();
     g
 });
 
 /// Process memory peak in bytes
 pub static PROCESS_MEMORY_PEAK_BYTES: Lazy<IntGauge> = Lazy::new(|| {
-    let g = IntGauge::with_opts(
-        Opts::new("process_memory_peak_bytes", "Process peak memory usage in bytes")
-    ).unwrap();
+    let g = IntGauge::with_opts(Opts::new(
+        "process_memory_peak_bytes",
+        "Process peak memory usage in bytes",
+    ))
+    .unwrap();
     REGISTRY.register(Box::new(g.clone())).ok();
     g
 });
 
 /// Process CPU usage percentage (0-100)
 pub static PROCESS_CPU_PERCENT: Lazy<Gauge> = Lazy::new(|| {
-    let g = Gauge::with_opts(
-        Opts::new("process_cpu_percent", "Process CPU usage percentage (0-100)")
-    ).unwrap();
+    let g = Gauge::with_opts(Opts::new(
+        "process_cpu_percent",
+        "Process CPU usage percentage (0-100)",
+    ))
+    .unwrap();
     REGISTRY.register(Box::new(g.clone())).ok();
     g
 });
 
 /// Estimated tracing memory overhead in bytes
 pub static TRACING_MEMORY_OVERHEAD_BYTES: Lazy<IntGauge> = Lazy::new(|| {
-    let g = IntGauge::with_opts(
-        Opts::new(
-            "tracing_memory_overhead_bytes",
-            "Estimated memory overhead from distributed tracing (1-2% of total)"
-        )
-    ).unwrap();
+    let g = IntGauge::with_opts(Opts::new(
+        "tracing_memory_overhead_bytes",
+        "Estimated memory overhead from distributed tracing (1-2% of total)",
+    ))
+    .unwrap();
     REGISTRY.register(Box::new(g.clone())).ok();
     g
 });
 
 /// Estimated tracing CPU overhead percentage
 pub static TRACING_CPU_OVERHEAD_PERCENT: Lazy<Gauge> = Lazy::new(|| {
-    let g = Gauge::with_opts(
-        Opts::new(
-            "tracing_cpu_overhead_percent",
-            "Estimated CPU overhead from distributed tracing (~0.5%)"
-        )
-    ).unwrap();
+    let g = Gauge::with_opts(Opts::new(
+        "tracing_cpu_overhead_percent",
+        "Estimated CPU overhead from distributed tracing (~0.5%)",
+    ))
+    .unwrap();
     REGISTRY.register(Box::new(g.clone())).ok();
     g
 });
@@ -129,23 +133,23 @@ impl ProcessStats {
     fn read() -> Result<Self, Box<dyn std::error::Error + Send + Sync>> {
         let stat = fs::read_to_string("/proc/self/stat")?;
         let fields: Vec<&str> = stat.split_whitespace().collect();
-        
+
         if fields.len() < 24 {
             return Err("Invalid /proc/self/stat format".into());
         }
-        
+
         Ok(Self {
             utime: fields[13].parse()?,
             stime: fields[14].parse()?,
             rss_pages: fields[23].parse()?,
         })
     }
-    
+
     /// Get total CPU time in jiffies
     fn total_cpu_time(&self) -> u64 {
         self.utime + self.stime
     }
-    
+
     /// Get RSS in bytes (assuming 4KB pages)
     fn rss_bytes(&self) -> u64 {
         self.rss_pages * 4096
@@ -166,7 +170,7 @@ impl MemoryStats {
     fn read() -> Result<Self, Box<dyn std::error::Error + Send + Sync>> {
         let status = fs::read_to_string("/proc/self/status")?;
         let mut stats = Self::default();
-        
+
         for line in status.lines() {
             if line.starts_with("VmPeak:") {
                 if let Some(value) = line.split_whitespace().nth(1) {
@@ -178,15 +182,15 @@ impl MemoryStats {
                 }
             }
         }
-        
+
         Ok(stats)
     }
-    
+
     /// Get peak memory in bytes
     fn peak_bytes(&self) -> u64 {
         self.vm_peak_kb * 1024
     }
-    
+
     /// Get current RSS in bytes
     fn rss_bytes(&self) -> u64 {
         self.vm_rss_kb * 1024
@@ -204,14 +208,14 @@ impl ResourceTracker {
     fn new() -> Self {
         // Get system clock ticks per second (usually 100)
         let clock_ticks_per_sec = unsafe { libc::sysconf(libc::_SC_CLK_TCK) as u64 };
-        
+
         Self {
             last_stats: None,
             last_update: Instant::now(),
             clock_ticks_per_sec,
         }
     }
-    
+
     /// Update resource metrics
     fn update(&mut self) {
         // Read current process stats
@@ -222,7 +226,7 @@ impl ResourceTracker {
                 return;
             }
         };
-        
+
         // Read memory stats
         let mem_stats = match MemoryStats::read() {
             Ok(stats) => stats,
@@ -231,42 +235,43 @@ impl ResourceTracker {
                 return;
             }
         };
-        
+
         // Update memory metrics
         let rss_bytes = mem_stats.rss_bytes();
         let peak_bytes = mem_stats.peak_bytes();
-        
+
         PROCESS_MEMORY_BYTES.set(rss_bytes as i64);
         PROCESS_MEMORY_PEAK_BYTES.set(peak_bytes as i64);
-        
+
         // Calculate tracing memory overhead (1-2% of total)
         // Using 1.5% as average estimate
         let tracing_overhead = (rss_bytes as f64 * 0.015) as i64;
         TRACING_MEMORY_OVERHEAD_BYTES.set(tracing_overhead);
-        
+
         // Calculate CPU usage if we have previous stats
         if let Some(ref last_stats) = self.last_stats {
             let elapsed = self.last_update.elapsed();
             let elapsed_secs = elapsed.as_secs_f64();
-            
+
             if elapsed_secs > 0.0 {
                 // Calculate CPU time delta in jiffies
-                let cpu_delta = current_stats.total_cpu_time()
+                let cpu_delta = current_stats
+                    .total_cpu_time()
                     .saturating_sub(last_stats.total_cpu_time());
-                
+
                 // Convert to seconds
                 let cpu_time_secs = cpu_delta as f64 / self.clock_ticks_per_sec as f64;
-                
+
                 // Calculate CPU percentage
                 let cpu_percent = (cpu_time_secs / elapsed_secs) * 100.0;
-                
+
                 PROCESS_CPU_PERCENT.set(cpu_percent);
-                
+
                 // Estimate tracing CPU overhead (~0.5%)
                 TRACING_CPU_OVERHEAD_PERCENT.set(0.5);
             }
         }
-        
+
         // Update tracking state
         self.last_stats = Some(current_stats);
         self.last_update = Instant::now();
@@ -282,21 +287,23 @@ impl ResourceTracker {
 ///
 /// # Returns
 /// Handle to the spawned task (can be used to cancel)
-pub fn start_resource_attribution(config: ResourceAttributionConfig) -> tokio::task::JoinHandle<()> {
+pub fn start_resource_attribution(
+    config: ResourceAttributionConfig,
+) -> tokio::task::JoinHandle<()> {
     debug!("Starting resource attribution background task...");
-    
+
     tokio::spawn(async move {
         let mut tracker = ResourceTracker::new();
         let mut interval = tokio::time::interval(Duration::from_secs(config.update_interval_secs));
-        
+
         loop {
             interval.tick().await;
-            
+
             if !config.is_enabled() {
                 debug!("Resource attribution disabled, skipping update");
                 continue;
             }
-            
+
             debug!("Updating resource attribution metrics...");
             tracker.update();
         }

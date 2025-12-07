@@ -3,11 +3,11 @@
 // Retrieval + Context Assembly + LLM Generation (Phi 3.5)
 
 use crate::embedder::EmbeddingService;
-use crate::memory::VectorStore;
 use crate::memory::llm_provider::LLMProvider;
+use crate::memory::VectorStore;
 use serde::{Deserialize, Serialize};
-use tracing::{debug, info};
 use std::sync::Arc;
+use tracing::{debug, info};
 
 /// RAG query request
 #[derive(Debug, Deserialize)]
@@ -78,7 +78,10 @@ impl RagQueryPipeline {
         llm_provider: Arc<dyn LLMProvider>,
         config: RagConfig,
     ) -> Self {
-        info!(llm_model = llm_provider.model_name(), "Initializing RAG pipeline");
+        info!(
+            llm_model = llm_provider.model_name(),
+            "Initializing RAG pipeline"
+        );
         Self {
             embedding_service,
             vector_store,
@@ -255,10 +258,13 @@ mod tests {
     #[test]
     fn test_context_assembly() {
         struct MockLLM;
-        
+
         #[async_trait::async_trait]
         impl LLMProvider for MockLLM {
-            async fn generate(&self, _prompt: &str) -> Result<String, crate::memory::llm_provider::LLMError> {
+            async fn generate(
+                &self,
+                _prompt: &str,
+            ) -> Result<String, crate::memory::llm_provider::LLMError> {
                 Ok("test".to_string())
             }
             fn model_name(&self) -> &str {
@@ -306,10 +312,13 @@ mod tests {
     async fn test_generate_answer_placeholder() {
         // Create a mock LLM provider for testing
         struct MockLLM;
-        
+
         #[async_trait::async_trait]
         impl LLMProvider for MockLLM {
-            async fn generate(&self, _prompt: &str) -> Result<String, crate::memory::llm_provider::LLMError> {
+            async fn generate(
+                &self,
+                _prompt: &str,
+            ) -> Result<String, crate::memory::llm_provider::LLMError> {
                 Ok("This is a test answer".to_string())
             }
             fn model_name(&self) -> &str {
@@ -328,10 +337,8 @@ mod tests {
             RagConfig::default(),
         );
 
-        let answer = pipeline
-            .generate_answer("test query", "test context")
-            .await;
-        
+        let answer = pipeline.generate_answer("test query", "test context").await;
+
         assert!(answer.is_ok());
         let ans = answer.unwrap();
         assert!(ans.contains("test answer"));

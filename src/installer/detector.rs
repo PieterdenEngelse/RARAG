@@ -50,8 +50,7 @@ pub fn get_required_dependencies(platform: &Platform) -> Vec<Dependency> {
                 version_arg: "--version".to_string(),
                 min_version: "0.25".to_string(),
                 install_instruction:
-                    "On Ubuntu/Debian: sudo apt-get install libsqlite3-dev pkg-config"
-                        .to_string(),
+                    "On Ubuntu/Debian: sudo apt-get install libsqlite3-dev pkg-config".to_string(),
             });
             deps.push(Dependency {
                 name: "Build tools".to_string(),
@@ -77,8 +76,8 @@ pub fn get_required_dependencies(platform: &Platform) -> Vec<Dependency> {
                 check_cmd: "cl".to_string(),
                 version_arg: "".to_string(),
                 min_version: "19.0".to_string(),
-                install_instruction:
-                    "Download from https://visualstudio.microsoft.com/downloads/".to_string(),
+                install_instruction: "Download from https://visualstudio.microsoft.com/downloads/"
+                    .to_string(),
             });
         }
         Platform::Unknown => {}
@@ -94,9 +93,7 @@ pub fn check_dependency(dep: &Dependency, logger: &InstallLogger) -> InstallerRe
         .output()
         .or_else(|_| {
             // Fallback for Windows
-            Command::new("where")
-                .arg(&dep.check_cmd)
-                .output()
+            Command::new("where").arg(&dep.check_cmd).output()
         });
 
     match output {
@@ -186,13 +183,9 @@ pub fn check_system_compiler(logger: &InstallLogger) -> InstallerResult<()> {
 /// Check network connectivity
 pub fn check_network() -> InstallerResult<()> {
     let output = if cfg!(target_os = "windows") {
-        Command::new("ping")
-            .args(&["-n", "1", "8.8.8.8"])
-            .output()
+        Command::new("ping").args(&["-n", "1", "8.8.8.8"]).output()
     } else {
-        Command::new("ping")
-            .args(&["-c", "1", "8.8.8.8"])
-            .output()
+        Command::new("ping").args(&["-c", "1", "8.8.8.8"]).output()
     };
 
     match output {

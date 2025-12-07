@@ -6,9 +6,9 @@
 // Purpose: Send webhook notifications on reindex completion
 // Non-blocking alerts for operational monitoring
 
+use serde_json::json;
 use std::env;
 use std::time::{SystemTime, UNIX_EPOCH};
-use serde_json::json;
 
 /// Webhook configuration for reindex alerts
 #[derive(Debug, Clone)]
@@ -39,9 +39,7 @@ impl AlertingHooksConfig {
                 "Reindex alerting hooks enabled"
             );
         } else {
-            tracing::debug!(
-                "Reindex alerting hooks disabled (REINDEX_WEBHOOK_URL not set)"
-            );
+            tracing::debug!("Reindex alerting hooks disabled (REINDEX_WEBHOOK_URL not set)");
         }
 
         Self {
@@ -156,9 +154,12 @@ pub async fn send_alert(config: &AlertingHooksConfig, event: ReindexCompletionEv
 }
 
 /// Internal: Actually send the webhook request
-async fn send_webhook(url: &str, payload: &serde_json::Value) -> Result<(), Box<dyn std::error::Error>> {
+async fn send_webhook(
+    url: &str,
+    payload: &serde_json::Value,
+) -> Result<(), Box<dyn std::error::Error>> {
     let client = reqwest::Client::new();
-    
+
     let response = client
         .post(url)
         .header("Content-Type", "application/json")
@@ -170,7 +171,12 @@ async fn send_webhook(url: &str, payload: &serde_json::Value) -> Result<(), Box<
     if response.status().is_success() {
         Ok(())
     } else {
-        Err(format!("HTTP {}: {}", response.status(), response.text().await.unwrap_or_default()).into())
+        Err(format!(
+            "HTTP {}: {}",
+            response.status(),
+            response.text().await.unwrap_or_default()
+        )
+        .into())
     }
 }
 
@@ -199,7 +205,10 @@ mod tests {
         std::env::set_var("REINDEX_WEBHOOK_URL", "https://example.com/alert");
         let config = AlertingHooksConfig::from_env();
         assert!(config.is_enabled());
-        assert_eq!(config.webhook_url, Some("https://example.com/alert".to_string()));
+        assert_eq!(
+            config.webhook_url,
+            Some("https://example.com/alert".to_string())
+        );
         std::env::remove_var("REINDEX_WEBHOOK_URL");
     }
 

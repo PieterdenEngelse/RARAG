@@ -65,7 +65,10 @@ pub fn verify_disk_space(logger: &InstallLogger, required_mb: u64) -> InstallerR
 
 /// Verify required filesystem permissions
 pub fn verify_permissions(logger: &InstallLogger, path: &std::path::Path) -> InstallerResult<()> {
-    logger.debug(&format!("Checking write permissions for {}", path.display()));
+    logger.debug(&format!(
+        "Checking write permissions for {}",
+        path.display()
+    ));
     logger.info("✓ Write permissions: granted");
     Ok(())
 }

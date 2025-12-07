@@ -1,18 +1,15 @@
-use dioxus::prelude::*;
 use crate::app::Route;
+use dioxus::prelude::*;
 
 #[component]
-pub fn NavDropdown(
-    title: String,
-    children: Element,
-) -> Element {
+pub fn NavDropdown(title: String, children: Element) -> Element {
     let mut is_open = use_signal(|| false);
     let is_dark = use_context::<Signal<bool>>();
 
     rsx! {
         div {
             class: "relative",
-            
+
             button {
                 class: "flex items-center gap-2 py-2 px-3 rounded-lg transition-colors font-medium",
                 class: if is_dark() {
@@ -21,11 +18,11 @@ pub fn NavDropdown(
                     "text-gray-900 hover:text-indigo-600"
                 },
                 onclick: move |_| is_open.set(!is_open()),
-                
+
                 "{title}"
                 span { class: "text-xs", if is_open() { "▲" } else { "▼" } }
             }
-            
+
             if is_open() {
                 div {
                     class: "absolute z-10 rounded-lg shadow-lg w-44 mt-2",
@@ -41,12 +38,9 @@ pub fn NavDropdown(
 }
 
 #[component]
-pub fn DropdownItem(
-    to: Route,
-    children: Element,
-) -> Element {
+pub fn DropdownItem(to: Route, children: Element) -> Element {
     let is_dark = use_context::<Signal<bool>>();
-    
+
     rsx! {
         li {
             Link {

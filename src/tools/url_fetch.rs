@@ -1,8 +1,8 @@
 // src/tools/url_fetch.rs
 // Phase 9: URL Fetch Tool Implementation
 
+use crate::tools::{Tool, ToolMetadata, ToolResult, ToolType};
 use async_trait::async_trait;
-use crate::tools::{Tool, ToolType, ToolResult, ToolMetadata};
 use std::time::Instant;
 
 #[derive(Debug, Clone)]
@@ -22,7 +22,7 @@ impl URLFetchTool {
     fn extract_urls(&self, query: &str) -> Vec<String> {
         // Simple URL extraction
         let mut urls = Vec::new();
-        
+
         // Look for http:// or https://
         if let Some(start) = query.find("http") {
             let rest = &query[start..];
@@ -32,7 +32,7 @@ impl URLFetchTool {
                 urls.push(rest.to_string());
             }
         }
-        
+
         urls
     }
 }

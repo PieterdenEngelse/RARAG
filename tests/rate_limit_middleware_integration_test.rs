@@ -5,10 +5,7 @@
 //
 // Run with: cargo test --test rate_limit_middleware_integration_test -- --nocapture
 
-use actix_web::{
-    test, web, App, HttpResponse, 
-    http::StatusCode,
-};
+use actix_web::{http::StatusCode, test, web, App, HttpResponse};
 use std::sync::Arc;
 
 // Import from your ag crate - ACTUAL structure
@@ -54,17 +51,15 @@ async fn test_middleware_allows_first_request() {
         exempt_prefixes: vec![],
         trust_proxy: false,
     };
-    
+
     let app = test::init_service(
         App::new()
             .wrap(RateLimitMiddleware::new_with_options(limiter, opts))
-            .route("/search", web::get().to(test_handler))
+            .route("/search", web::get().to(test_handler)),
     )
     .await;
 
-    let req = test::TestRequest::get()
-        .uri("/search?q=test")
-        .to_request();
+    let req = test::TestRequest::get().uri("/search?q=test").to_request();
 
     let resp = test::call_service(&app, req).await;
     assert_eq!(resp.status(), StatusCode::OK);
@@ -92,25 +87,21 @@ async fn test_middleware_blocks_excess_requests() {
         exempt_prefixes: vec![],
         trust_proxy: false,
     };
-    
+
     let app = test::init_service(
         App::new()
             .wrap(RateLimitMiddleware::new_with_options(limiter, opts))
-            .route("/search", web::get().to(test_handler))
+            .route("/search", web::get().to(test_handler)),
     )
     .await;
 
     // First request should succeed
-    let req1 = test::TestRequest::get()
-        .uri("/search?q=test1")
-        .to_request();
+    let req1 = test::TestRequest::get().uri("/search?q=test1").to_request();
     let resp1 = test::call_service(&app, req1).await;
     assert_eq!(resp1.status(), StatusCode::OK);
 
     // Second immediate request should be rate limited
-    let req2 = test::TestRequest::get()
-        .uri("/search?q=test2")
-        .to_request();
+    let req2 = test::TestRequest::get().uri("/search?q=test2").to_request();
     let resp2 = test::call_service(&app, req2).await;
     assert_eq!(resp2.status(), StatusCode::TOO_MANY_REQUESTS);
 }
@@ -137,34 +128,31 @@ async fn test_middleware_sets_retry_after_header() {
         exempt_prefixes: vec![],
         trust_proxy: false,
     };
-    
+
     let app = test::init_service(
         App::new()
             .wrap(RateLimitMiddleware::new_with_options(limiter, opts))
-            .route("/search", web::get().to(test_handler))
+            .route("/search", web::get().to(test_handler)),
     )
     .await;
 
     // Exhaust rate limit
-    let req1 = test::TestRequest::get()
-        .uri("/search?q=test1")
-        .to_request();
+    let req1 = test::TestRequest::get().uri("/search?q=test1").to_request();
     let _ = test::call_service(&app, req1).await;
 
     // Next request should fail and have Retry-After header
-    let req2 = test::TestRequest::get()
-        .uri("/search?q=test2")
-        .to_request();
+    let req2 = test::TestRequest::get().uri("/search?q=test2").to_request();
     let resp = test::call_service(&app, req2).await;
-    
+
     assert_eq!(resp.status(), StatusCode::TOO_MANY_REQUESTS);
     assert!(resp.headers().contains_key("retry-after"));
-    
-    let retry_after = resp.headers()
+
+    let retry_after = resp
+        .headers()
         .get("retry-after")
         .and_then(|h| h.to_str().ok())
         .and_then(|s| s.parse::<u64>().ok());
-    
+
     assert!(retry_after.is_some());
     assert!(retry_after.unwrap() > 0);
 }
@@ -183,29 +171,33 @@ async fn test_middleware_per_route_policies() {
     };
     let limiter = Arc::new(RateLimiter::new(config));
     let opts = RateLimitOptions {
-        search_qps: 1.0,        // 1 request/sec for /search
+        search_qps: 1.0, // 1 request/sec for /search
         search_burst: 1.0,
-        upload_qps: 100.0,      // Much higher for /upload
+        upload_qps: 100.0, // Much higher for /upload
         upload_burst: 200.0,
         rules: vec![],
         exempt_prefixes: vec![],
         trust_proxy: false,
     };
-    
+
     let app = test::init_service(
         App::new()
             .wrap(RateLimitMiddleware::new_with_options(limiter, opts))
-            .route("/search", web::get().to(test_handler))
+            .route("/search", web::get().to(test_handler)),
     )
     .await;
 
     // /search should be rate limited (1.0 QPS)
     let search1 = test::TestRequest::get().uri("/search").to_request();
     let search2 = test::TestRequest::get().uri("/search").to_request();
-    
+
     let _ = test::call_service(&app, search1).await;
     let resp = test::call_service(&app, search2).await;
-    assert_eq!(resp.status(), StatusCode::TOO_MANY_REQUESTS, "search should be rate limited at 1.0 QPS");
+    assert_eq!(
+        resp.status(),
+        StatusCode::TOO_MANY_REQUESTS,
+        "search should be rate limited at 1.0 QPS"
+    );
 }
 
 // ───────────────────────────────────────────────────────────────────────────
@@ -228,13 +220,13 @@ async fn test_middleware_trust_proxy_x_forwarded_for() {
         upload_burst: 10.0,
         rules: vec![],
         exempt_prefixes: vec![],
-        trust_proxy: true,  // TRUST PROXY FOR X-FORWARDED-FOR
+        trust_proxy: true, // TRUST PROXY FOR X-FORWARDED-FOR
     };
-    
+
     let app = test::init_service(
         App::new()
             .wrap(RateLimitMiddleware::new_with_options(limiter, opts))
-            .route("/search", web::get().to(test_handler))
+            .route("/search", web::get().to(test_handler)),
     )
     .await;
 
@@ -280,11 +272,11 @@ async fn test_middleware_trust_proxy_forwarded_header() {
         exempt_prefixes: vec![],
         trust_proxy: true,
     };
-    
+
     let app = test::init_service(
         App::new()
             .wrap(RateLimitMiddleware::new_with_options(limiter, opts))
-            .route("/search", web::get().to(test_handler))
+            .route("/search", web::get().to(test_handler)),
     )
     .await;
 
@@ -322,12 +314,12 @@ async fn test_middleware_exempt_prefixes() {
         exempt_prefixes: vec!["/health".to_string(), "/ready".to_string()],
         trust_proxy: false,
     };
-    
+
     let app = test::init_service(
         App::new()
             .wrap(RateLimitMiddleware::new_with_options(limiter, opts))
             .route("/search", web::get().to(test_handler))
-            .route("/health", web::get().to(test_handler))
+            .route("/health", web::get().to(test_handler)),
     )
     .await;
 
@@ -343,7 +335,7 @@ async fn test_middleware_exempt_prefixes() {
     // /search should still be rate limited
     let req1 = test::TestRequest::get().uri("/search").to_request();
     let _ = test::call_service(&app, req1).await;
-    
+
     let req2 = test::TestRequest::get().uri("/search").to_request();
     let resp = test::call_service(&app, req2).await;
     assert_eq!(resp.status(), StatusCode::TOO_MANY_REQUESTS);
@@ -373,11 +365,11 @@ async fn test_middleware_429_response_format() {
         exempt_prefixes: vec![],
         trust_proxy: false,
     };
-    
+
     let app = test::init_service(
         App::new()
             .wrap(RateLimitMiddleware::new_with_options(limiter, opts))
-            .route("/search", web::get().to(test_handler))
+            .route("/search", web::get().to(test_handler)),
     )
     .await;
 
@@ -393,7 +385,7 @@ async fn test_middleware_429_response_format() {
     // Verify response body
     let body = to_bytes(resp.into_body()).await.unwrap();
     let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
-    
+
     assert_eq!(json["status"], "rate_limited");
     assert!(json["message"].is_string());
     assert!(json["retry_after"].is_number());
@@ -421,11 +413,11 @@ async fn test_middleware_per_ip_isolation() {
         exempt_prefixes: vec![],
         trust_proxy: true,
     };
-    
+
     let app = test::init_service(
         App::new()
             .wrap(RateLimitMiddleware::new_with_options(limiter, opts))
-            .route("/search", web::get().to(test_handler))
+            .route("/search", web::get().to(test_handler)),
     )
     .await;
 

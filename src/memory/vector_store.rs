@@ -1,6 +1,5 @@
-
 /// VectorStore - Memory-bounded vector storage with eviction policies
-/// 
+///
 /// ENHANCED VERSION: Builds on the existing VectorStore design
 /// Adds fixed capacity limits + eviction policies while keeping:
 /// - Async/await with tokio
@@ -10,7 +9,6 @@
 ///
 /// Phase 3: Vector Storage using Lance (embedded vector database)
 /// Phase 4: Memory bounds with eviction policies (NEW)
-
 use crate::embedder::EmbeddingVector;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -39,7 +37,7 @@ pub struct VectorRecord {
     pub token_count: usize,
     pub source: String,
     pub created_at: i64,
-    
+
     // NEW: Fields for Phase 4 memory bounds
     #[serde(default)]
     pub relevance_score: f32,
@@ -99,7 +97,7 @@ pub struct SearchResult {
 pub struct VectorStoreConfig {
     pub db_path: std::path::PathBuf,
     pub table_name: String,
-    
+
     // NEW: Phase 4 memory bounds configuration
     pub max_vectors: usize,
     pub eviction_policy: EvictionPolicy,
@@ -136,7 +134,11 @@ impl StoreMetrics {
     /// Calculate hit rate as a percentage (0.0 to 1.0)
     pub fn hit_rate(&self) -> f32 {
         let total = self.lookup_hits + self.lookup_misses;
-        if total == 0 { 0.0 } else { self.lookup_hits as f32 / total as f32 }
+        if total == 0 {
+            0.0
+        } else {
+            self.lookup_hits as f32 / total as f32
+        }
     }
 }
 
@@ -144,7 +146,7 @@ impl StoreMetrics {
 pub struct VectorStore {
     config: VectorStoreConfig,
     records: Vec<VectorRecord>,
-    
+
     // NEW: Phase 4 memory bounds tracking
     index_map: HashMap<String, usize>,
     insertion_counter: u64,
@@ -236,7 +238,10 @@ impl VectorStore {
     }
 
     /// Add multiple records in batch
-    pub async fn add_records(&mut self, records: Vec<VectorRecord>) -> Result<(), VectorStoreError> {
+    pub async fn add_records(
+        &mut self,
+        records: Vec<VectorRecord>,
+    ) -> Result<(), VectorStoreError> {
         info!(count = records.len(), "Adding batch of records");
 
         for record in records {
@@ -265,7 +270,7 @@ impl VectorStore {
             .map(|record| {
                 // Update access time for LRU
                 record.last_accessed = Instant::now();
-                
+
                 let similarity = cosine_similarity(query_embedding, &record.embedding);
                 SearchResult {
                     chunk_id: record.chunk_id.clone(),
@@ -317,11 +322,11 @@ impl VectorStore {
             if idx != self.records.len() - 1 {
                 let last_idx = self.records.len() - 1;
                 let last_id = self.records[last_idx].chunk_id.clone();
-                
+
                 self.records.swap(idx, last_idx);
                 self.index_map.insert(last_id, idx);
             }
-            
+
             self.records.pop();
             Ok(())
         } else {
@@ -334,7 +339,7 @@ impl VectorStore {
         debug!(document_id = %document_id, "Deleting document");
 
         let initial_len = self.records.len();
-        
+
         // Collect indices to delete (in reverse order to avoid index shifting)
         let mut indices_to_delete: Vec<usize> = self
             .records
@@ -343,20 +348,20 @@ impl VectorStore {
             .filter(|(_, r)| r.document_id == document_id)
             .map(|(idx, _)| idx)
             .collect();
-        
+
         indices_to_delete.sort_by(|a, b| b.cmp(a));
-        
+
         for idx in indices_to_delete {
             let chunk_id = self.records[idx].chunk_id.clone();
             self.index_map.remove(&chunk_id);
-            
+
             if idx != self.records.len() - 1 {
                 let last_idx = self.records.len() - 1;
                 let last_id = self.records[last_idx].chunk_id.clone();
                 self.records.swap(idx, last_idx);
                 self.index_map.insert(last_id, idx);
             }
-            
+
             self.records.pop();
         }
 
@@ -434,16 +439,16 @@ impl VectorStore {
         if let Some(idx) = idx_to_evict {
             let evicted_id = self.records[idx].chunk_id.clone();
             debug!(chunk_id = %evicted_id, "Evicting record");
-            
+
             self.index_map.remove(&evicted_id);
-            
+
             if idx != self.records.len() - 1 {
                 let last_idx = self.records.len() - 1;
                 let last_id = self.records[last_idx].chunk_id.clone();
                 self.records.swap(idx, last_idx);
                 self.index_map.insert(last_id, idx);
             }
-            
+
             self.records.pop();
             self.metrics.total_evictions += 1;
         }
@@ -506,7 +511,9 @@ pub enum VectorStoreError {
 impl std::fmt::Display for VectorStoreError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Self::InitializationFailed(msg) => write!(f, "Failed to initialize vector store: {}", msg),
+            Self::InitializationFailed(msg) => {
+                write!(f, "Failed to initialize vector store: {}", msg)
+            }
             Self::NotFound(id) => write!(f, "Record not found: {}", id),
             Self::InvalidDimension => write!(f, "Invalid vector dimension"),
             Self::StorageError(msg) => write!(f, "Storage error: {}", msg),
@@ -607,7 +614,10 @@ mod tests {
         let mut record3 = create_test_record("chunk3", "doc2");
         record3.embedding = vec![0.0, 1.0, 0.0];
 
-        store.add_records(vec![record1, record2, record3]).await.unwrap();
+        store
+            .add_records(vec![record1, record2, record3])
+            .await
+            .unwrap();
 
         let query = vec![1.0, 0.0, 0.0];
         let results = store.search(&query, 2).await.unwrap();

@@ -1,6 +1,6 @@
 // ag/src/db/schema_init.rs v13.1.2
-use rusqlite::{Connection, Result as SqlResult};
 use crate::path_manager::PathManager;
+use rusqlite::{Connection, Result as SqlResult};
 use tracing::info;
 
 pub struct SchemaInitializer;

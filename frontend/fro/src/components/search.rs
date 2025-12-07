@@ -1,5 +1,5 @@
-use dioxus::prelude::*;
 use crate::api::{self, SearchResult};
+use dioxus::prelude::*;
 
 #[component]
 pub fn SearchBar() -> Element {
@@ -36,7 +36,7 @@ pub fn SearchBar() -> Element {
         spawn(async move {
             loading.set(true);
             error.set(None);
-            
+
             match api::search(&query_text).await {
                 Ok(response) => {
                     let is_empty = response.results.is_empty();
@@ -50,7 +50,7 @@ pub fn SearchBar() -> Element {
                     results.set(Vec::new());
                 }
             }
-            
+
             loading.set(false);
         });
     };
@@ -69,7 +69,7 @@ pub fn SearchBar() -> Element {
             spawn(async move {
                 loading.set(true);
                 error.set(None);
-                
+
                 match api::search(&query_text).await {
                     Ok(response) => {
                         let is_empty = response.results.is_empty();
@@ -83,28 +83,28 @@ pub fn SearchBar() -> Element {
                         results.set(Vec::new());
                     }
                 }
-                
+
                 loading.set(false);
             });
         }
     };
 
     rsx! {
-        div { 
+        div {
             class: "w-full max-w-4xl mx-auto p-6",
-            
+
             // Backend status indicator
-            div { 
+            div {
                 class: "mb-4 text-sm text-gray-600 dark:text-gray-400",
                 "Backend: {backend_status}"
             }
 
             // Search input
-            div { 
+            div {
                 class: "flex gap-2 mb-6",
-                
+
                 input {
-                    class: "flex-1 px-4 py-2 border border-gray-300 dark:border-gray-600 rounded-lg 
+                    class: "flex-1 px-4 py-2 border border-gray-300 dark:border-gray-600 rounded-lg
                            bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100
                            focus:outline-none focus:ring-2 focus:ring-indigo-500",
                     r#type: "text",
@@ -114,13 +114,13 @@ pub fn SearchBar() -> Element {
                     onkeypress: on_keypress,
                     disabled: loading(),
                 }
-                
+
                 button {
                     class: "px-6 py-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg
                            transition-colors disabled:opacity-50 disabled:cursor-not-allowed",
                     onclick: on_search,
                     disabled: loading() || query().trim().is_empty(),
-                    
+
                     if loading() {
                         "Searching..."
                     } else {
@@ -131,8 +131,8 @@ pub fn SearchBar() -> Element {
 
             // Error message
             if let Some(err) = error() {
-                div { 
-                    class: "mb-4 p-4 bg-red-50 dark:bg-red-900/20 border border-red-200 
+                div {
+                    class: "mb-4 p-4 bg-red-50 dark:bg-red-900/20 border border-red-200
                            dark:border-red-800 rounded-lg text-red-700 dark:text-red-400",
                     "{err}"
                 }
@@ -140,40 +140,40 @@ pub fn SearchBar() -> Element {
 
             // Results
             if !results().is_empty() {
-                div { 
+                div {
                     class: "space-y-4",
-                    
-                    div { 
+
+                    div {
                         class: "text-sm text-gray-600 dark:text-gray-400 mb-4",
                         "Found {results().len()} result(s)"
                     }
 
                     for (idx, result) in results().iter().enumerate() {
-                        div { 
+                        div {
                             key: "{idx}",
-                            class: "p-4 bg-white dark:bg-gray-800 border border-gray-200 
+                            class: "p-4 bg-white dark:bg-gray-800 border border-gray-200
                                    dark:border-gray-700 rounded-lg shadow-sm hover:shadow-md 
                                    transition-shadow",
-                            
+
                             // Score badge
-                            div { 
+                            div {
                                 class: "flex items-center justify-between mb-2",
-                                
-                                span { 
-                                    class: "text-xs font-medium px-2 py-1 bg-indigo-100 
+
+                                span {
+                                    class: "text-xs font-medium px-2 py-1 bg-indigo-100
                                            dark:bg-indigo-900 text-indigo-700 dark:text-indigo-300 
                                            rounded",
                                     "Score: {result.score:.2}"
                                 }
-                                
-                                span { 
+
+                                span {
                                     class: "text-xs text-gray-500 dark:text-gray-400",
                                     "📄 {result.document}"
                                 }
                             }
-                            
+
                             // Content
-                            p { 
+                            p {
                                 class: "text-gray-800 dark:text-gray-200 leading-relaxed",
                                 "{result.content}"
                             }
@@ -181,15 +181,15 @@ pub fn SearchBar() -> Element {
                     }
                 }
             } else if !loading() && query().trim().is_empty() {
-                div { 
+                div {
                     class: "text-center py-12 text-gray-500 dark:text-gray-400",
-                    
-                    div { 
+
+                    div {
                         class: "text-4xl mb-4",
                         "🔍"
                     }
-                    
-                    p { 
+
+                    p {
                         class: "text-lg",
                         "Enter a search query to find relevant documents"
                     }
@@ -198,15 +198,15 @@ pub fn SearchBar() -> Element {
 
             // Loading state
             if loading() {
-                div { 
+                div {
                     class: "text-center py-12",
-                    
-                    div { 
-                        class: "inline-block animate-spin rounded-full h-12 w-12 
+
+                    div {
+                        class: "inline-block animate-spin rounded-full h-12 w-12
                                border-b-2 border-indigo-600"
                     }
-                    
-                    p { 
+
+                    p {
                         class: "mt-4 text-gray-600 dark:text-gray-400",
                         "Searching..."
                     }

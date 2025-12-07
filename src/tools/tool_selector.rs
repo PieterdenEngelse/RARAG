@@ -1,8 +1,8 @@
 // src/tools/tool_selector.rs - UPDATED v2
 // Phase 9: Tool Selection Logic (Improved Intent Detection)
 
-use serde::{Deserialize, Serialize};
 use crate::tools::ToolType;
+use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ToolSelection {
@@ -62,7 +62,6 @@ impl ToolSelector {
             return QueryIntent::WebSearch;
         }
 
-    
         // Database query detection
         if Self::is_database_query(&q) {
             return QueryIntent::Database;
@@ -86,11 +85,7 @@ impl ToolSelector {
         let intent = Self::detect_intent(query);
 
         let (primary, secondary, confidence) = match intent {
-            QueryIntent::Math => (
-                ToolType::Calculator,
-                vec![ToolType::SemanticSearch],
-                0.95,
-            ),
+            QueryIntent::Math => (ToolType::Calculator, vec![ToolType::SemanticSearch], 0.95),
             QueryIntent::WebSearch => (
                 ToolType::WebSearch,
                 vec![ToolType::SemanticSearch, ToolType::URLFetch],
@@ -116,16 +111,10 @@ impl ToolSelector {
                 vec![ToolType::SemanticSearch],
                 0.65,
             ),
-            QueryIntent::SemanticSearch => (
-                ToolType::SemanticSearch,
-                vec![ToolType::WebSearch],
-                0.60,
-            ),
-            QueryIntent::Unknown => (
-                ToolType::SemanticSearch,
-                vec![ToolType::WebSearch],
-                0.50,
-            ),
+            QueryIntent::SemanticSearch => {
+                (ToolType::SemanticSearch, vec![ToolType::WebSearch], 0.60)
+            }
+            QueryIntent::Unknown => (ToolType::SemanticSearch, vec![ToolType::WebSearch], 0.50),
         };
 
         let reasoning = format!(
@@ -149,26 +138,67 @@ impl ToolSelector {
     // ============ Intent Detection Methods ============
 
     fn is_math_query(query: &str) -> bool {
-    let math_keywords = vec![
-        "calculate", "compute", "math", "add", "subtract", "multiply", "divide",
-        "plus", "minus", "times", "equals", "=", "+", "-", "*", "/",
-        "sum", "product", "quotient", "percentage", "%", "count",
-    ];
+        let math_keywords = vec![
+            "calculate",
+            "compute",
+            "math",
+            "add",
+            "subtract",
+            "multiply",
+            "divide",
+            "plus",
+            "minus",
+            "times",
+            "equals",
+            "=",
+            "+",
+            "-",
+            "*",
+            "/",
+            "sum",
+            "product",
+            "quotient",
+            "percentage",
+            "%",
+            "count",
+        ];
 
-    // Check if it's just a number or contains math operators
-    if query.trim().chars().all(|c| c.is_numeric() || c == '.' || c == '-') {
-        return true;
+        // Check if it's just a number or contains math operators
+        if query
+            .trim()
+            .chars()
+            .all(|c| c.is_numeric() || c == '.' || c == '-')
+        {
+            return true;
+        }
+
+        math_keywords.iter().any(|kw| query.contains(kw))
     }
-
-    math_keywords.iter().any(|kw| query.contains(kw))
-}
 
     fn is_web_search_query(query: &str) -> bool {
         let search_keywords = vec![
-            "search", "find", "look for", "what is", "who is", "where is",
-            "when is", "how", "latest", "recent", "current", "news",
-            "trending", "popular", "top", "best", "papers", "articles",
-            "information", "research", "studies", "data",
+            "search",
+            "find",
+            "look for",
+            "what is",
+            "who is",
+            "where is",
+            "when is",
+            "how",
+            "latest",
+            "recent",
+            "current",
+            "news",
+            "trending",
+            "popular",
+            "top",
+            "best",
+            "papers",
+            "articles",
+            "information",
+            "research",
+            "studies",
+            "data",
         ];
 
         search_keywords.iter().any(|kw| query.contains(kw))
@@ -176,9 +206,19 @@ impl ToolSelector {
 
     fn is_url_fetch_query(query: &str) -> bool {
         let fetch_keywords = vec![
-            "fetch", "get", "retrieve", "download", "read",
-            "http://", "https://", "url", "website", "page",
-            "content from", "visit", "extract",
+            "fetch",
+            "get",
+            "retrieve",
+            "download",
+            "read",
+            "http://",
+            "https://",
+            "url",
+            "website",
+            "page",
+            "content from",
+            "visit",
+            "extract",
         ];
 
         fetch_keywords.iter().any(|kw| query.contains(kw))
@@ -188,8 +228,17 @@ impl ToolSelector {
 
     fn is_database_query(query: &str) -> bool {
         let db_keywords = vec![
-            "query", "select", "from", "where", "database", "sql",
-            "table", "record", "data", "store", "retrieve from db",
+            "query",
+            "select",
+            "from",
+            "where",
+            "database",
+            "sql",
+            "table",
+            "record",
+            "data",
+            "store",
+            "retrieve from db",
         ];
 
         db_keywords.iter().any(|kw| query.contains(kw))
@@ -197,8 +246,15 @@ impl ToolSelector {
 
     fn is_code_execution_query(query: &str) -> bool {
         let code_keywords = vec![
-            "execute", "run", "code", "script", "function",
-            "compile", "debug", "test code", "write code",
+            "execute",
+            "run",
+            "code",
+            "script",
+            "function",
+            "compile",
+            "debug",
+            "test code",
+            "write code",
         ];
 
         code_keywords.iter().any(|kw| query.contains(kw))
@@ -206,8 +262,15 @@ impl ToolSelector {
 
     fn is_image_generation_query(query: &str) -> bool {
         let image_keywords = vec![
-            "generate", "create image", "draw", "paint", "visualize",
-            "image of", "picture of", "design", "artwork",
+            "generate",
+            "create image",
+            "draw",
+            "paint",
+            "visualize",
+            "image of",
+            "picture of",
+            "design",
+            "artwork",
         ];
 
         image_keywords.iter().any(|kw| query.contains(kw))
@@ -220,22 +283,46 @@ mod tests {
 
     #[test]
     fn test_detect_math_intent() {
-        assert_eq!(ToolSelector::detect_intent("What is 5 + 3?"), QueryIntent::Math);
-        assert_eq!(ToolSelector::detect_intent("Calculate 100 * 2"), QueryIntent::Math);
-        assert_eq!(ToolSelector::detect_intent("Count the papers"), QueryIntent::Math);
+        assert_eq!(
+            ToolSelector::detect_intent("What is 5 + 3?"),
+            QueryIntent::Math
+        );
+        assert_eq!(
+            ToolSelector::detect_intent("Calculate 100 * 2"),
+            QueryIntent::Math
+        );
+        assert_eq!(
+            ToolSelector::detect_intent("Count the papers"),
+            QueryIntent::Math
+        );
     }
 
     #[test]
     fn test_detect_web_search_intent() {
-        assert_eq!(ToolSelector::detect_intent("Find latest AI news"), QueryIntent::WebSearch);
-        assert_eq!(ToolSelector::detect_intent("What is Rust?"), QueryIntent::WebSearch);
-        assert_eq!(ToolSelector::detect_intent("Find papers about AI"), QueryIntent::WebSearch);
+        assert_eq!(
+            ToolSelector::detect_intent("Find latest AI news"),
+            QueryIntent::WebSearch
+        );
+        assert_eq!(
+            ToolSelector::detect_intent("What is Rust?"),
+            QueryIntent::WebSearch
+        );
+        assert_eq!(
+            ToolSelector::detect_intent("Find papers about AI"),
+            QueryIntent::WebSearch
+        );
     }
 
     #[test]
     fn test_detect_url_fetch_intent() {
-        assert_eq!(ToolSelector::detect_intent("Fetch https://example.com"), QueryIntent::UrlFetch);
-        assert_eq!(ToolSelector::detect_intent("Get content from http://test.com"), QueryIntent::UrlFetch);
+        assert_eq!(
+            ToolSelector::detect_intent("Fetch https://example.com"),
+            QueryIntent::UrlFetch
+        );
+        assert_eq!(
+            ToolSelector::detect_intent("Get content from http://test.com"),
+            QueryIntent::UrlFetch
+        );
     }
 
     #[test]

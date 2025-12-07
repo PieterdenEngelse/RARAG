@@ -1,12 +1,12 @@
-use std::env;
 use crate::path_manager::PathManager;
+use std::env;
 
 #[derive(Debug, Clone)]
 pub struct ApiConfig {
     // Network
     pub host: String,
     pub port: u16,
-    
+
     // Phase 15 - Reliability & Observability
     pub skip_initial_indexing: bool,
     pub index_in_ram: bool,
@@ -20,10 +20,10 @@ pub struct ApiConfig {
     pub rate_limit_upload_qps: Option<f64>,
     pub rate_limit_upload_burst: Option<u32>,
     pub rate_limit_lru_capacity: usize,
-    
+
     // Path Management
     pub path_manager: PathManager,
-    
+
     // Redis L3 Cache
     pub redis_enabled: bool,
     pub redis_url: Option<String>,
@@ -33,31 +33,32 @@ pub struct ApiConfig {
 impl ApiConfig {
     pub fn from_env() -> Self {
         // Allow tests to opt out of dotenv to avoid env contamination
-        let no_dotenv = std::env::var("NO_DOTENV").map(|v| v.to_lowercase() == "true" || v == "1").unwrap_or(false);
+        let no_dotenv = std::env::var("NO_DOTENV")
+            .map(|v| v.to_lowercase() == "true" || v == "1")
+            .unwrap_or(false);
         if !no_dotenv {
             dotenvy::dotenv().ok();
         }
-        
+
         // Network configuration
-        let host = env::var("BACKEND_HOST")
-            .unwrap_or_else(|_| "127.0.0.1".to_string());
-        
+        let host = env::var("BACKEND_HOST").unwrap_or_else(|_| "127.0.0.1".to_string());
+
         let port = env::var("BACKEND_PORT")
             .unwrap_or_else(|_| "3010".to_string())
             .parse()
             .expect("BACKEND_PORT must be a valid u16");
-        
+
         // Phase 15 - Reliability & Observability
         let skip_initial_indexing = env::var("SKIP_INITIAL_INDEXING")
             .map(|v| v.to_lowercase() == "true" || v == "1")
             .unwrap_or(false);
-        
+
         let index_in_ram = env::var("INDEX_IN_RAM")
             .map(|v| v.to_lowercase() == "true" || v == "1")
             .unwrap_or(false);
-        
+
         let reindex_webhook_url = env::var("REINDEX_WEBHOOK_URL").ok();
-        
+
         let rate_limit_enabled = env::var("RATE_LIMIT_ENABLED")
             .map(|v| v.to_lowercase() == "true" || v == "1")
             .unwrap_or(false);
@@ -72,29 +73,38 @@ impl ApiConfig {
         let trust_proxy = env::var("TRUST_PROXY")
             .map(|v| v.to_lowercase() == "true" || v == "1")
             .unwrap_or(false);
-        let rate_limit_search_qps = env::var("RATE_LIMIT_SEARCH_QPS").ok().and_then(|v| v.parse().ok());
-        let rate_limit_search_burst = env::var("RATE_LIMIT_SEARCH_BURST").ok().and_then(|v| v.parse().ok());
-        let rate_limit_upload_qps = env::var("RATE_LIMIT_UPLOAD_QPS").ok().and_then(|v| v.parse().ok());
-        let rate_limit_upload_burst = env::var("RATE_LIMIT_UPLOAD_BURST").ok().and_then(|v| v.parse().ok());
+        let rate_limit_search_qps = env::var("RATE_LIMIT_SEARCH_QPS")
+            .ok()
+            .and_then(|v| v.parse().ok());
+        let rate_limit_search_burst = env::var("RATE_LIMIT_SEARCH_BURST")
+            .ok()
+            .and_then(|v| v.parse().ok());
+        let rate_limit_upload_qps = env::var("RATE_LIMIT_UPLOAD_QPS")
+            .ok()
+            .and_then(|v| v.parse().ok());
+        let rate_limit_upload_burst = env::var("RATE_LIMIT_UPLOAD_BURST")
+            .ok()
+            .and_then(|v| v.parse().ok());
         let rate_limit_lru_capacity = env::var("RATE_LIMIT_LRU_CAPACITY")
-            .unwrap_or_else(|_| "1024".to_string()).parse().unwrap_or(1024);
-        
+            .unwrap_or_else(|_| "1024".to_string())
+            .parse()
+            .unwrap_or(1024);
+
         // Path Management
-        let path_manager = PathManager::new()
-            .expect("Failed to initialize PathManager");
-        
+        let path_manager = PathManager::new().expect("Failed to initialize PathManager");
+
         // Redis L3 Cache
         let redis_enabled = env::var("REDIS_ENABLED")
             .map(|v| v.to_lowercase() == "true" || v == "1")
             .unwrap_or(false);
-        
+
         let redis_url = env::var("REDIS_URL").ok();
-        
+
         let redis_ttl = env::var("REDIS_TTL")
             .unwrap_or_else(|_| "3600".to_string())
             .parse()
             .unwrap_or(3600);
-        
+
         Self {
             host,
             port,

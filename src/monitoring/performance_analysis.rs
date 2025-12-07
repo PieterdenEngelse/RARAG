@@ -57,13 +57,15 @@ impl PerformanceAnalyzer {
         };
 
         if let Ok(mut metrics) = self.metrics.write() {
-            let samples = metrics.entry(operation.to_string()).or_insert_with(Vec::new);
-            
+            let samples = metrics
+                .entry(operation.to_string())
+                .or_insert_with(Vec::new);
+
             // Keep only recent samples
             if samples.len() >= self.max_samples {
                 samples.remove(0);
             }
-            
+
             samples.push(metric);
         }
     }
@@ -76,11 +78,8 @@ impl PerformanceAnalyzer {
     pub fn percentile(&self, operation: &str, percentile: f64) -> Option<u64> {
         if let Ok(metrics) = self.metrics.read() {
             if let Some(samples) = metrics.get(operation) {
-                let mut durations: Vec<u64> = samples
-                    .iter()
-                    .map(|m| m.duration_ms)
-                    .collect();
-                
+                let mut durations: Vec<u64> = samples.iter().map(|m| m.duration_ms).collect();
+
                 if durations.is_empty() {
                     return None;
                 }
@@ -134,7 +133,10 @@ impl PerformanceAnalyzer {
                 if samples.is_empty() {
                     return None;
                 }
-                let errors = samples.iter().filter(|m| m.status != OperationStatus::Success).count();
+                let errors = samples
+                    .iter()
+                    .filter(|m| m.status != OperationStatus::Success)
+                    .count();
                 return Some(errors as f64 / samples.len() as f64);
             }
         }
@@ -207,18 +209,34 @@ mod tests {
     #[test]
     fn test_record_operation() {
         let analyzer = PerformanceAnalyzer::new(1000);
-        analyzer.record("search", Duration::from_millis(50), OperationStatus::Success);
-        analyzer.record("search", Duration::from_millis(100), OperationStatus::Success);
-        
+        analyzer.record(
+            "search",
+            Duration::from_millis(50),
+            OperationStatus::Success,
+        );
+        analyzer.record(
+            "search",
+            Duration::from_millis(100),
+            OperationStatus::Success,
+        );
+
         assert_eq!(analyzer.count("search"), Some(2));
     }
 
     #[test]
     fn test_average_latency() {
         let analyzer = PerformanceAnalyzer::new(1000);
-        analyzer.record("search", Duration::from_millis(50), OperationStatus::Success);
-        analyzer.record("search", Duration::from_millis(100), OperationStatus::Success);
-        
+        analyzer.record(
+            "search",
+            Duration::from_millis(50),
+            OperationStatus::Success,
+        );
+        analyzer.record(
+            "search",
+            Duration::from_millis(100),
+            OperationStatus::Success,
+        );
+
         assert_eq!(analyzer.average("search"), Some(75));
     }
 
@@ -228,7 +246,7 @@ mod tests {
         for i in 1..=100 {
             analyzer.record("search", Duration::from_millis(i), OperationStatus::Success);
         }
-        
+
         assert_eq!(analyzer.percentile("search", 50.0), Some(50));
         assert_eq!(analyzer.percentile("search", 95.0), Some(95));
         assert_eq!(analyzer.percentile("search", 99.0), Some(99));
@@ -237,10 +255,18 @@ mod tests {
     #[test]
     fn test_error_rate() {
         let analyzer = PerformanceAnalyzer::new(1000);
-        analyzer.record("search", Duration::from_millis(50), OperationStatus::Success);
+        analyzer.record(
+            "search",
+            Duration::from_millis(50),
+            OperationStatus::Success,
+        );
         analyzer.record("search", Duration::from_millis(100), OperationStatus::Error);
-        analyzer.record("search", Duration::from_millis(75), OperationStatus::Success);
-        
+        analyzer.record(
+            "search",
+            Duration::from_millis(75),
+            OperationStatus::Success,
+        );
+
         let error_rate = analyzer.error_rate("search").unwrap();
         assert!((error_rate - 0.333).abs() < 0.01);
     }
@@ -248,10 +274,22 @@ mod tests {
     #[test]
     fn test_min_max() {
         let analyzer = PerformanceAnalyzer::new(1000);
-        analyzer.record("search", Duration::from_millis(50), OperationStatus::Success);
-        analyzer.record("search", Duration::from_millis(150), OperationStatus::Success);
-        analyzer.record("search", Duration::from_millis(100), OperationStatus::Success);
-        
+        analyzer.record(
+            "search",
+            Duration::from_millis(50),
+            OperationStatus::Success,
+        );
+        analyzer.record(
+            "search",
+            Duration::from_millis(150),
+            OperationStatus::Success,
+        );
+        analyzer.record(
+            "search",
+            Duration::from_millis(100),
+            OperationStatus::Success,
+        );
+
         assert_eq!(analyzer.min("search"), Some(50));
         assert_eq!(analyzer.max("search"), Some(150));
     }
@@ -259,9 +297,13 @@ mod tests {
     #[test]
     fn test_clear_metrics() {
         let analyzer = PerformanceAnalyzer::new(1000);
-        analyzer.record("search", Duration::from_millis(50), OperationStatus::Success);
+        analyzer.record(
+            "search",
+            Duration::from_millis(50),
+            OperationStatus::Success,
+        );
         assert_eq!(analyzer.count("search"), Some(1));
-        
+
         analyzer.clear();
         assert_eq!(analyzer.count("search"), None);
     }

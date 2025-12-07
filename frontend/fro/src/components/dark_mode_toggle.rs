@@ -19,7 +19,7 @@ pub fn DarkModeToggle() -> Element {
                 is_dark.set(new_value);
             },
             class: "{button_class}",
-            
+
             if is_dark() {
                 "☀️ Light"
             } else {
@@ -28,4 +28,3 @@ pub fn DarkModeToggle() -> Element {
         }
     }
 }
-

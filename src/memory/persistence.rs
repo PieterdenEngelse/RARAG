@@ -84,9 +84,7 @@ pub async fn save_vector_store<P: AsRef<Path>>(
 }
 
 /// Load vector store metadata from JSON file
-pub async fn load_vector_store<P: AsRef<Path>>(
-    path: P,
-) -> Result<VectorStore, PersistenceError> {
+pub async fn load_vector_store<P: AsRef<Path>>(path: P) -> Result<VectorStore, PersistenceError> {
     let path = path.as_ref();
     debug!(path = ?path, "Loading vector store metadata");
 

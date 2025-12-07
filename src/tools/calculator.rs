@@ -1,8 +1,8 @@
 // src/tools/calculator.rs - PRODUCTION
 // Phase 9: Calculator Tool Implementation
 
+use crate::tools::{Tool, ToolMetadata, ToolResult, ToolType};
 use async_trait::async_trait;
-use crate::tools::{Tool, ToolType, ToolResult, ToolMetadata};
 use std::time::Instant;
 
 #[derive(Debug, Clone)]
@@ -21,51 +21,63 @@ impl CalculatorTool {
 
     fn evaluate_expression(&self, expr: &str) -> Result<String, String> {
         let expr = expr.trim();
-        
+
         // Handle standalone numbers first
         if let Ok(num) = expr.parse::<f64>() {
             return Ok(num.to_string());
         }
-        
+
         // Handle simple cases with operators
         if expr.contains("+") {
             let parts: Vec<&str> = expr.split("+").collect();
             if parts.len() == 2 {
-                if let (Ok(a), Ok(b)) = (parts[0].trim().parse::<f64>(), parts[1].trim().parse::<f64>()) {
+                if let (Ok(a), Ok(b)) = (
+                    parts[0].trim().parse::<f64>(),
+                    parts[1].trim().parse::<f64>(),
+                ) {
                     return Ok((a + b).to_string());
                 }
             }
         }
-        
+
         if expr.contains("-") && !expr.starts_with("-") {
             let parts: Vec<&str> = expr.split("-").collect();
             if parts.len() == 2 {
-                if let (Ok(a), Ok(b)) = (parts[0].trim().parse::<f64>(), parts[1].trim().parse::<f64>()) {
+                if let (Ok(a), Ok(b)) = (
+                    parts[0].trim().parse::<f64>(),
+                    parts[1].trim().parse::<f64>(),
+                ) {
                     return Ok((a - b).to_string());
                 }
             }
         }
-        
+
         if expr.contains("*") {
             let parts: Vec<&str> = expr.split("*").collect();
             if parts.len() == 2 {
-                if let (Ok(a), Ok(b)) = (parts[0].trim().parse::<f64>(), parts[1].trim().parse::<f64>()) {
+                if let (Ok(a), Ok(b)) = (
+                    parts[0].trim().parse::<f64>(),
+                    parts[1].trim().parse::<f64>(),
+                ) {
                     return Ok((a * b).to_string());
                 }
             }
         }
-        
+
         if expr.contains("/") {
             let parts: Vec<&str> = expr.split("/").collect();
             if parts.len() == 2 {
-                if let (Ok(a), Ok(b)) = (parts[0].trim().parse::<f64>(), parts[1].trim().parse::<f64>()) {
+                if let (Ok(a), Ok(b)) = (
+                    parts[0].trim().parse::<f64>(),
+                    parts[1].trim().parse::<f64>(),
+                ) {
                     if b != 0.0 {
                         return Ok((a / b).to_string());
                     }
                 }
             }
         }
-        
+
         Err("Could not evaluate expression".to_string())
     }
 }
@@ -92,32 +104,28 @@ impl Tool for CalculatorTool {
         let start = Instant::now();
 
         match self.evaluate_expression(query) {
-            Ok(result) => {
-                Ok(ToolResult {
-                    tool: ToolType::Calculator,
-                    success: true,
-                    result: format!("{} = {}", query, result),
-                    metadata: ToolMetadata {
-                        execution_time_ms: start.elapsed().as_millis() as u64,
-                        confidence: 0.99,
-                        source: Some("Calculator".to_string()),
-                        cost: Some(0.0),
-                    },
-                })
-            }
-            Err(_) => {
-                Ok(ToolResult {
-                    tool: ToolType::Calculator,
-                    success: false,
-                    result: format!("Could not evaluate: {}", query),
-                    metadata: ToolMetadata {
-                        execution_time_ms: start.elapsed().as_millis() as u64,
-                        confidence: 0.0,
-                        source: Some("Calculator".to_string()),
-                        cost: Some(0.0),
-                    },
-                })
-            }
+            Ok(result) => Ok(ToolResult {
+                tool: ToolType::Calculator,
+                success: true,
+                result: format!("{} = {}", query, result),
+                metadata: ToolMetadata {
+                    execution_time_ms: start.elapsed().as_millis() as u64,
+                    confidence: 0.99,
+                    source: Some("Calculator".to_string()),
+                    cost: Some(0.0),
+                },
+            }),
+            Err(_) => Ok(ToolResult {
+                tool: ToolType::Calculator,
+                success: false,
+                result: format!("Could not evaluate: {}", query),
+                metadata: ToolMetadata {
+                    execution_time_ms: start.elapsed().as_millis() as u64,
+                    confidence: 0.0,
+                    source: Some("Calculator".to_string()),
+                    cost: Some(0.0),
+                },
+            }),
         }
     }
 
@@ -150,7 +158,7 @@ mod tests {
         let res = result.unwrap();
         assert!(res.result.contains("42"));
     }
-    
+
     #[tokio::test]
     async fn test_calculator_standalone_number() {
         let tool = CalculatorTool::new();

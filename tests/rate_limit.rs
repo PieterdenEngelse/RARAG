@@ -18,19 +18,22 @@ async fn rate_limit_per_ip_token_bucket() {
     // Avoid loading .env during test to prevent config contamination
     env::set_var("NO_DOTENV", "true");
     // Allow switching between deterministic (Option 1) and realistic (Option 2) behavior via env
-    let mode = std::env::var("RATE_LIMIT_TEST_MODE").unwrap_or_else(|_| "deterministic".to_string());
+    let mode =
+        std::env::var("RATE_LIMIT_TEST_MODE").unwrap_or_else(|_| "deterministic".to_string());
     if mode == "deterministic" {
         // Option 1: Strict determinism – consume burst then block all
-        env::set_var("RATE_LIMIT_ROUTES",
-            r#"[{"pattern":"/search","match_kind":"Prefix","qps":0.0,"burst":2.0,"label":"search"}]"#
+        env::set_var(
+            "RATE_LIMIT_ROUTES",
+            r#"[{"pattern":"/search","match_kind":"Prefix","qps":0.0,"burst":2.0,"label":"search"}]"#,
         );
         // No discrete refill needed here
         env::remove_var("RATE_LIMIT_DISCRETE_REFILL");
         env::remove_var("RATE_LIMIT_REFILL_INTERVAL_MS");
     } else {
         // Option 2: Realistic policy, discrete refill, but assertions tolerant
-        env::set_var("RATE_LIMIT_ROUTES",
-            r#"[{"pattern":"/search","match_kind":"Prefix","qps":1.0,"burst":2.0,"label":"search"}]"#
+        env::set_var(
+            "RATE_LIMIT_ROUTES",
+            r#"[{"pattern":"/search","match_kind":"Prefix","qps":1.0,"burst":2.0,"label":"search"}]"#,
         );
         env::set_var("RATE_LIMIT_DISCRETE_REFILL", "true");
         env::set_var("RATE_LIMIT_REFILL_INTERVAL_MS", "3600000"); // large interval to avoid refills during loop
@@ -44,10 +47,9 @@ async fn rate_limit_per_ip_token_bucket() {
     tokio::spawn(async move {
         let config = ag::config::ApiConfig::from_env();
         let pm = &config.path_manager;
-        let retriever = ag::Retriever::new_with_paths(
-            pm.index_path("tantivy"),
-            pm.vector_store_path()
-        ).expect("retriever init");
+        let retriever =
+            ag::Retriever::new_with_paths(pm.index_path("tantivy"), pm.vector_store_path())
+                .expect("retriever init");
         let retriever = std::sync::Arc::new(std::sync::Mutex::new(retriever));
         ag::api::set_retriever_handle(std::sync::Arc::clone(&retriever));
         ag::api::start_api_server(&config).await.unwrap();
@@ -63,7 +65,9 @@ async fn rate_limit_per_ip_token_bucket() {
         .get(format!("http://127.0.0.1:{}/health", port))
         // Use a different client IP for warmup to avoid draining tokens for /search
         .header("X-Forwarded-For", "9.9.9.9")
-        .send().await.unwrap();
+        .send()
+        .await
+        .unwrap();
 
     // Fire 8 requests
     let mut codes = Vec::new();
@@ -71,7 +75,9 @@ async fn rate_limit_per_ip_token_bucket() {
         let resp = client
             .get(format!("http://127.0.0.1:{}/search?q=hi", port))
             .header("X-Forwarded-For", "1.2.3.4")
-            .send().await.unwrap();
+            .send()
+            .await
+            .unwrap();
         codes.push(resp.status().as_u16());
     }
 

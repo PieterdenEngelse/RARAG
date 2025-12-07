@@ -1,8 +1,8 @@
-use dioxus::prelude::*;
 use crate::app::Route;
+use dioxus::prelude::*;
 
 #[component]
-pub fn PageNotFound(segments: Vec<String>) -> Element {
+pub fn PageNotFound(#[props(default = vec![])] segments: Vec<String>) -> Element {
     rsx! {
         div { class: "p-8 text-center",
             h1 { class: "text-3xl font-bold text-red-600 dark:text-red-400",

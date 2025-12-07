@@ -6,7 +6,9 @@ use actix_web::{web, HttpResponse, Result as ActixResult};
 use serde_json::json;
 
 #[cfg(feature = "profiling")]
-fn not_implemented_msg() -> &'static str { "profiling feature enabled; implementation pending" }
+fn not_implemented_msg() -> &'static str {
+    "profiling feature enabled; implementation pending"
+}
 
 #[cfg(feature = "profiling")]
 fn dummy_metadata(kind: &str) -> serde_json::Value {
@@ -17,7 +19,9 @@ fn dummy_metadata(kind: &str) -> serde_json::Value {
     })
 }
 #[cfg(not(feature = "profiling"))]
-fn not_implemented_msg() -> &'static str { "profiling disabled; build with --features profiling" }
+fn not_implemented_msg() -> &'static str {
+    "profiling disabled; build with --features profiling"
+}
 
 /// GET /monitoring/pprof/cpu
 pub async fn pprof_cpu() -> ActixResult<HttpResponse> {
@@ -52,6 +56,6 @@ pub fn register_pprof_routes(cfg: &mut web::ServiceConfig) {
     cfg.service(
         web::scope("/monitoring/pprof")
             .route("/cpu", web::get().to(pprof_cpu))
-            .route("/heap", web::get().to(pprof_heap))
+            .route("/heap", web::get().to(pprof_heap)),
     );
 }

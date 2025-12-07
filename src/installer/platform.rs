@@ -1,6 +1,6 @@
 // src/installer/platform.rs - v0.1.0
 // Platform detection and OS-specific installation path resolution
-// 
+//
 // INSTALLER IMPACT NOTES:
 // - Needed for cross-platform installation (Linux, macOS, Windows)
 // - Affects directory structure creation in install.sh
@@ -63,24 +63,24 @@ impl PlatformInfo {
     pub fn new() -> Result<Self, String> {
         let os = Platform::detect();
         let arch = env::consts::ARCH.to_string();
-        
-        let home_dir = dirs::home_dir()
-            .ok_or_else(|| "Could not determine home directory".to_string())?;
-        
+
+        let home_dir =
+            dirs::home_dir().ok_or_else(|| "Could not determine home directory".to_string())?;
+
         let config_dir = match os {
             Platform::Linux => home_dir.join(".config/fro"),
             Platform::MacOS => home_dir.join("Library/Application Support/fro"),
             Platform::Windows => home_dir.join("AppData/Local/fro"),
             Platform::Unknown => home_dir.join(".fro"),
         };
-        
+
         let data_dir = match os {
             Platform::Linux => home_dir.join(".local/share/fro"),
             Platform::MacOS => home_dir.join("Library/Application Support/fro/data"),
             Platform::Windows => home_dir.join("AppData/Local/fro/data"),
             Platform::Unknown => home_dir.join(".fro/data"),
         };
-        
+
         Ok(PlatformInfo {
             os,
             arch,

@@ -1,6 +1,10 @@
-use dioxus::prelude::*;
 use crate::components::header::Header;
-use crate::pages::{Home, About, PageNotFound};
+use crate::pages::{
+    About, Home, MonitorCache, MonitorIndex, MonitorLogs, MonitorOverview, MonitorRateLimits,
+    MonitorRequests, PageNotFound,
+};
+use dioxus::prelude::*;
+use dioxus_router::prelude::*;
 
 #[derive(Routable, Clone, PartialEq)]
 #[rustfmt::skip]
@@ -10,6 +14,18 @@ pub enum Route {
         Home {},
         #[route("/about")]
         About {},
+        #[route("/monitor")]
+        MonitorOverview {},
+        #[route("/monitor/requests")]
+        MonitorRequests {},
+        #[route("/monitor/cache")]
+        MonitorCache {},
+        #[route("/monitor/index")]
+        MonitorIndex {},
+        #[route("/monitor/rate-limits")]
+        MonitorRateLimits {},
+        #[route("/monitor/logs")]
+        MonitorLogs {},
     #[end_layout]
     #[route("/:..segments")]
     PageNotFound { segments: Vec<String> },
@@ -22,7 +38,7 @@ pub fn App() -> Element {
     rsx! {
         document::Link { rel: "icon", href: asset!("/assets/favicon.ico") }
         document::Link { rel: "stylesheet", href: asset!("/assets/styling/output.css") }
-        
+
         Router::<Route> {}
     }
 }
@@ -35,7 +51,7 @@ fn Layout() -> Element {
     use_effect(use_reactive!(|is_dark| {
         let dark_mode = is_dark();
         web_sys::console::log_1(&format!("Dark mode effect running: {}", dark_mode).into());
-        
+
         if let Some(window) = web_sys::window() {
             if let Some(document) = window.document() {
                 if let Some(html) = document.document_element() {
@@ -56,9 +72,9 @@ fn Layout() -> Element {
     rsx! {
         div {
             class: "min-h-screen transition-colors bg-white dark:bg-gray-900 text-gray-900 dark:text-white",
-            
+
             Header {}
-            
+
             main {
                 Outlet::<Route> {}
             }

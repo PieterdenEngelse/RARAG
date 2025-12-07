@@ -1,5 +1,5 @@
 //! Monitoring module for agentic-rag
-//! 
+//!
 //! Provides:
 //! - Structured logging with tracing
 //! - Prometheus metrics collection
@@ -10,51 +10,43 @@
 //! - Creates ~/.agentic-rag/logs/ directory
 //! - Requires RUST_LOG environment variable
 //! - Requires MONITORING_ENABLED=true environment variable
-pub mod config;
-pub mod metrics;
-pub mod tracing_config;
-pub mod health;
-pub mod handlers;
-pub mod pprof;
-pub mod histogram_config;
-pub mod metrics_config;
-pub mod config_phase15;
 pub mod alerting_hooks;
+pub mod config;
+pub mod config_phase15;
 pub mod distributed_tracing;
-pub mod trace_middleware;
-pub mod trace_context;
-pub mod performance_analysis;
-pub mod rate_limit_middleware;
+pub mod handlers;
+pub mod health;
+pub mod histogram_config;
+pub mod metrics;
+pub mod metrics_config;
 pub mod otel_config;
-pub mod trace_alerting;
+pub mod performance_analysis;
+pub mod pprof;
+pub mod rate_limit_middleware;
 pub mod resource_attribution;
+pub mod trace_alerting;
+pub mod trace_context;
+pub mod trace_middleware;
+pub mod tracing_config;
+pub mod ui_metrics;
 
-pub use config::MonitoringConfig;
-pub use trace_context::{set_trace_id, get_trace_id, clear_trace_id};
 pub use crate::monitoring::metrics::{
-    REGISTRY,
-    APP_INFO,
-    STARTUP_DURATION_MS,
-    REINDEX_SUCCESS_TOTAL,
-    REINDEX_FAILURE_TOTAL,
-    SEARCH_LATENCY_MS,
-    CACHE_HITS_TOTAL,
-    CACHE_MISSES_TOTAL,
-    RATE_LIMIT_DROPS_TOTAL,
-    RATE_LIMIT_DROPS_BY_ROUTE,
-    DOCUMENTS_TOTAL,
+    export_prometheus, observe_reindex_duration_ms, observe_search_latency_ms,
+    refresh_retriever_gauges, APP_INFO, CACHE_HITS_TOTAL, CACHE_MISSES_TOTAL, DOCUMENTS_TOTAL,
+    INDEX_SIZE_BYTES, RATE_LIMIT_DROPS_BY_ROUTE, RATE_LIMIT_DROPS_TOTAL, REGISTRY,
+    REINDEX_FAILURE_TOTAL, REINDEX_SUCCESS_TOTAL, SEARCH_LATENCY_MS, STARTUP_DURATION_MS,
     VECTORS_TOTAL,
-    INDEX_SIZE_BYTES,
-    refresh_retriever_gauges,
-    observe_search_latency_ms,
-    observe_reindex_duration_ms,
-    export_prometheus,
 };
+pub use alerting_hooks::{AlertingHooksConfig, ReindexCompletionEvent};
+pub use config::MonitoringConfig;
 pub use health::HealthStatus;
 pub use histogram_config::HistogramBuckets;
-pub use alerting_hooks::{AlertingHooksConfig, ReindexCompletionEvent};
-pub use trace_alerting::{TraceAlertingConfig, TraceAnomalyEvent, start_trace_alerting};
-pub use resource_attribution::{ResourceAttributionConfig, start_resource_attribution};
+pub use resource_attribution::{start_resource_attribution, ResourceAttributionConfig};
+pub use trace_alerting::{start_trace_alerting, TraceAlertingConfig, TraceAnomalyEvent};
+pub use trace_context::{clear_trace_id, get_trace_id, set_trace_id};
+pub use ui_metrics::{
+    get_requests_snapshot, record_http_request, RequestChartPoint, RequestsSnapshot,
+};
 
 use std::sync::Arc;
 use std::time::Instant;
@@ -69,7 +61,7 @@ pub struct MonitoringContext {
 
 impl MonitoringContext {
     /// Initialize monitoring system
-    /// 
+    ///
     /// INSTALLER IMPACT:
     /// - Must be called before starting API server
     /// - Creates log directories
@@ -82,11 +74,20 @@ impl MonitoringContext {
         let health = Arc::new(health::HealthTracker::new());
         let startup_time = Instant::now();
         // Log effective histogram buckets at startup for visibility
-        let search_buckets = crate::monitoring::metrics::__test_parse_buckets_env("SEARCH_HISTO_BUCKETS")
-            .unwrap_or(vec![1.0,2.0,5.0,10.0,20.0,50.0,100.0,250.0,500.0,1000.0]);
-        let reindex_buckets = crate::monitoring::metrics::__test_parse_buckets_env("REINDEX_HISTO_BUCKETS")
-            .unwrap_or(vec![50.0,100.0,250.0,500.0,1000.0,2000.0,5000.0,10000.0]);
-        tracing::info!(?search_buckets, ?reindex_buckets, "Monitoring system initialized with histogram buckets");
+        let search_buckets =
+            crate::monitoring::metrics::__test_parse_buckets_env("SEARCH_HISTO_BUCKETS").unwrap_or(
+                vec![1.0, 2.0, 5.0, 10.0, 20.0, 50.0, 100.0, 250.0, 500.0, 1000.0],
+            );
+        let reindex_buckets =
+            crate::monitoring::metrics::__test_parse_buckets_env("REINDEX_HISTO_BUCKETS")
+                .unwrap_or(vec![
+                    50.0, 100.0, 250.0, 500.0, 1000.0, 2000.0, 5000.0, 10000.0,
+                ]);
+        tracing::info!(
+            ?search_buckets,
+            ?reindex_buckets,
+            "Monitoring system initialized with histogram buckets"
+        );
         Ok(Self {
             config,
             health,
@@ -95,7 +96,7 @@ impl MonitoringContext {
     }
 
     /// Record startup completion
-    /// 
+    ///
     /// INSTALLER IMPACT:
     /// - Must be called after server is listening
     /// - Records startup duration in metrics

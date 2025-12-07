@@ -16,10 +16,9 @@ async fn rate_limit_lru_eviction_behavior() {
     tokio::spawn(async move {
         let config = ag::config::ApiConfig::from_env();
         let pm = &config.path_manager;
-        let retriever = ag::Retriever::new_with_paths(
-            pm.index_path("tantivy"),
-            pm.vector_store_path(),
-        ).expect("retriever init");
+        let retriever =
+            ag::Retriever::new_with_paths(pm.index_path("tantivy"), pm.vector_store_path())
+                .expect("retriever init");
         let retriever = std::sync::Arc::new(std::sync::Mutex::new(retriever));
         ag::api::set_retriever_handle(std::sync::Arc::clone(&retriever));
         ag::api::start_api_server(&config).await.unwrap();
@@ -32,15 +31,39 @@ async fn rate_limit_lru_eviction_behavior() {
 
     // Hit with 3 distinct IPs to fill LRU (burst=1 means first request should be 200)
     for ip in ["1.1.1.1", "2.2.2.2", "3.3.3.3"] {
-        let code = client.get(&url).header("X-Forwarded-For", ip).send().await.unwrap().status().as_u16();
+        let code = client
+            .get(&url)
+            .header("X-Forwarded-For", ip)
+            .send()
+            .await
+            .unwrap()
+            .status()
+            .as_u16();
         assert_eq!(code, 200, "initial token for {} should succeed", ip);
     }
 
     // Now introduce a 4th IP -> should evict the LRU oldest (1.1.1.1)
-    let code4 = client.get(&url).header("X-Forwarded-For", "4.4.4.4").send().await.unwrap().status().as_u16();
+    let code4 = client
+        .get(&url)
+        .header("X-Forwarded-For", "4.4.4.4")
+        .send()
+        .await
+        .unwrap()
+        .status()
+        .as_u16();
     assert_eq!(code4, 200);
 
     // The oldest (1.1.1.1) should have been evicted; when it comes back it should behave as new -> 200 again
-    let code1_again = client.get(&url).header("X-Forwarded-For", "1.1.1.1").send().await.unwrap().status().as_u16();
-    assert_eq!(code1_again, 200, "after eviction, 1.1.1.1 should be treated as new with fresh token");
+    let code1_again = client
+        .get(&url)
+        .header("X-Forwarded-For", "1.1.1.1")
+        .send()
+        .await
+        .unwrap()
+        .status()
+        .as_u16();
+    assert_eq!(
+        code1_again, 200,
+        "after eviction, 1.1.1.1 should be treated as new with fresh token"
+    );
 }

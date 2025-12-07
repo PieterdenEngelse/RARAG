@@ -1,9 +1,9 @@
 // src/tools/tool_composer.rs - UPDATED
 // Phase 10: Tool Composition Engine (v2 - Better Query Cleaning)
 
-use serde::{Deserialize, Serialize};
-use crate::tools::tool_selector::{ToolSelector, QueryIntent};
+use crate::tools::tool_selector::{QueryIntent, ToolSelector};
 use crate::tools::ToolType;
+use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ExecutionStep {
@@ -49,9 +49,19 @@ impl ToolComposer {
     pub fn is_multi_step_query(query: &str) -> bool {
         let q = query.to_lowercase();
         let multi_step_keywords = vec![
-            "and", "then", "after", "also", "plus", "additionally",
-            "furthermore", "moreover", "followed by", "next",
-            "first", "second", "third",
+            "and",
+            "then",
+            "after",
+            "also",
+            "plus",
+            "additionally",
+            "furthermore",
+            "moreover",
+            "followed by",
+            "next",
+            "first",
+            "second",
+            "third",
         ];
 
         multi_step_keywords.iter().any(|kw| q.contains(kw))
@@ -72,7 +82,7 @@ impl ToolComposer {
             .replace("Fetch ", "")
             .trim()
             .to_string();
-        
+
         cleaned
     }
 

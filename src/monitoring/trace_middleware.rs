@@ -1,17 +1,26 @@
+use crate::monitoring::metrics::REQUEST_LATENCY_MS;
+use crate::monitoring::{clear_trace_id, record_http_request, set_trace_id};
+use actix_service::{Service, Transform};
+use actix_web::{
+    dev::{ServiceRequest, ServiceResponse},
+    http::header,
+    Error,
+};
+use opentelemetry::{
+    global,
+    trace::{Span, Status, Tracer},
+};
 use std::future::{ready, Ready};
 use std::task::{Context, Poll};
 use std::time::Instant;
-use actix_service::{Service, Transform};
-use actix_web::{dev::{ServiceRequest, ServiceResponse}, Error, http::header};
 use tracing::{info_span, Instrument};
-use opentelemetry::{global, trace::{Tracer, Status, Span}};
-use crate::monitoring::metrics::REQUEST_LATENCY_MS;
-use crate::monitoring::{set_trace_id, clear_trace_id};
 
 pub struct TraceMiddleware;
 
 impl TraceMiddleware {
-    pub fn new() -> Self { Self }
+    pub fn new() -> Self {
+        Self
+    }
 }
 
 impl<S, B> Transform<S, ServiceRequest> for TraceMiddleware
@@ -43,22 +52,30 @@ where
 {
     type Response = ServiceResponse<B>;
     type Error = Error;
-    type Future = std::pin::Pin<Box<dyn std::future::Future<Output = Result<Self::Response, Self::Error>>>>;
+    type Future =
+        std::pin::Pin<Box<dyn std::future::Future<Output = Result<Self::Response, Self::Error>>>>;
 
-    fn poll_ready(&self, cx: &mut Context<'_>) -> Poll<Result<(), <Self as Service<ServiceRequest>>::Error>> {
+    fn poll_ready(
+        &self,
+        cx: &mut Context<'_>,
+    ) -> Poll<Result<(), <Self as Service<ServiceRequest>>::Error>> {
         self.service.poll_ready(cx)
     }
 
     fn call(&self, req: ServiceRequest) -> <Self as Service<ServiceRequest>>::Future {
         let method = req.method().to_string();
-        let route_label = req.match_pattern().unwrap_or_else(|| req.path().to_string());
-        let user_agent = req.headers()
+        let route_label = req
+            .match_pattern()
+            .unwrap_or_else(|| req.path().to_string());
+        let user_agent = req
+            .headers()
             .get(header::USER_AGENT)
             .and_then(|v| v.to_str().ok())
             .unwrap_or("")
             .to_string();
         let request_id = uuid::Uuid::new_v4().to_string();
-        let client_ip = req.connection_info()
+        let client_ip = req
+            .connection_info()
             .realip_remote_addr()
             .unwrap_or("unknown")
             .to_string();
@@ -79,34 +96,56 @@ where
         let span_name = format!("{} {}", method, route_label);
         let mut otel_span = tracer.start(span_name);
         otel_span.set_attribute(opentelemetry::KeyValue::new("http.method", method.clone()));
-        otel_span.set_attribute(opentelemetry::KeyValue::new("http.url", route_label.clone()));
-        otel_span.set_attribute(opentelemetry::KeyValue::new("http.client_ip", client_ip.clone()));
+        otel_span.set_attribute(opentelemetry::KeyValue::new(
+            "http.url",
+            route_label.clone(),
+        ));
+        otel_span.set_attribute(opentelemetry::KeyValue::new(
+            "http.client_ip",
+            client_ip.clone(),
+        ));
         otel_span.set_attribute(opentelemetry::KeyValue::new("trace.id", request_id.clone()));
-        otel_span.set_attribute(opentelemetry::KeyValue::new("http.user_agent", user_agent.clone()));
+        otel_span.set_attribute(opentelemetry::KeyValue::new(
+            "http.user_agent",
+            user_agent.clone(),
+        ));
 
         let start = Instant::now();
         let fut = self.service.call(req);
 
         Box::pin(async move {
             let res = fut.instrument(span).await;
-            
+
             if let Ok(ref response) = res {
                 let status = response.status().as_u16();
                 let duration_ms = start.elapsed().as_millis() as u64;
                 let status_class = format!("{}xx", status / 100);
 
                 if status >= 400 {
-                    otel_span.set_status(Status::Error { description: format!("HTTP {}", status).into() });
+                    otel_span.set_status(Status::Error {
+                        description: format!("HTTP {}", status).into(),
+                    });
                 } else {
                     otel_span.set_status(Status::Ok);
                 }
 
-                otel_span.set_attribute(opentelemetry::KeyValue::new("http.status_code", status as i64));
-                otel_span.set_attribute(opentelemetry::KeyValue::new("http.duration_ms", duration_ms as i64));
+                otel_span.set_attribute(opentelemetry::KeyValue::new(
+                    "http.status_code",
+                    status as i64,
+                ));
+                otel_span.set_attribute(opentelemetry::KeyValue::new(
+                    "http.duration_ms",
+                    duration_ms as i64,
+                ));
 
+                let duration_ms_f64 = duration_ms as f64;
                 REQUEST_LATENCY_MS
                     .with_label_values(&[&method, &route_label, &status_class])
-                    .observe(duration_ms as f64);
+                    .observe(duration_ms_f64);
+
+                // Feed self-contained UI metrics buffer
+                let is_error = status >= 500;
+                record_http_request(duration_ms_f64, is_error, &status_class);
 
                 tracing::info!(
                     method = %method,
@@ -117,9 +156,11 @@ where
                     "request completed"
                 );
             } else {
-                otel_span.set_status(Status::Error { description: "Request failed".into() });
+                otel_span.set_status(Status::Error {
+                    description: "Request failed".into(),
+                });
             }
-            
+
             clear_trace_id();
             res
         })

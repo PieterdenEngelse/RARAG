@@ -1,11 +1,11 @@
 //! Phase 11: Caching Layer
-//! 
+//!
 //! Minimal, testable multi-layer cache implementation
 //! L1: In-process LRU (already in retriever)
 //! L2: SQLite-backed persistent cache
 
+use serde::{Deserialize, Serialize};
 use std::time::{Duration, SystemTime};
-use serde::{Serialize, Deserialize};
 
 /// Cache statistics for monitoring
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -40,7 +40,11 @@ impl CacheStats {
 
     pub fn hit_rate(&self) -> f64 {
         let total = self.total_hits() + self.total_misses();
-        if total == 0 { 0.0 } else { self.total_hits() as f64 / total as f64 }
+        if total == 0 {
+            0.0
+        } else {
+            self.total_hits() as f64 / total as f64
+        }
     }
 }
 
@@ -86,7 +90,7 @@ impl<K: Clone + std::hash::Hash + Eq, V: Clone> MemoryCache<K, V> {
 
     pub fn get(&self, key: &K) -> Option<V> {
         let mut entries = self.entries.lock().unwrap();
-        
+
         if let Some(entry) = entries.get_mut(key) {
             if !entry.is_expired(self.ttl) {
                 entry.hit_count += 1;
@@ -135,10 +139,10 @@ mod tests {
         let cache = MemoryCache::<String, Vec<String>>::new(60);
         let key = "query1".to_string();
         let value = vec!["result1".to_string(), "result2".to_string()];
-        
+
         cache.set(key.clone(), value.clone());
         let retrieved = cache.get(&key);
-        
+
         assert_eq!(retrieved, Some(value));
     }
 
@@ -146,7 +150,7 @@ mod tests {
     fn test_cache_miss() {
         let cache = MemoryCache::<String, Vec<String>>::new(60);
         let key = "nonexistent".to_string();
-        
+
         let retrieved = cache.get(&key);
         assert_eq!(retrieved, None);
     }
@@ -156,10 +160,10 @@ mod tests {
         let cache = MemoryCache::<String, Vec<String>>::new(60);
         let key = "query1".to_string();
         let value = vec!["result1".to_string()];
-        
+
         cache.set(key.clone(), value);
         cache.delete(&key);
-        
+
         let retrieved = cache.get(&key);
         assert_eq!(retrieved, None);
     }
@@ -169,7 +173,7 @@ mod tests {
         let mut stats = CacheStats::default();
         stats.l1_hits = 10;
         stats.l1_misses = 5;
-        
+
         assert_eq!(stats.total_hits(), 10);
         assert_eq!(stats.total_misses(), 5);
         assert_eq!(stats.hit_rate(), 10.0 / 15.0);
@@ -180,7 +184,7 @@ mod tests {
         let cache = MemoryCache::<String, String>::new(60);
         cache.set("key1".to_string(), "value1".to_string());
         cache.set("key2".to_string(), "value2".to_string());
-        
+
         assert_eq!(cache.len(), 2);
         cache.clear();
         assert_eq!(cache.len(), 0);
@@ -188,12 +192,12 @@ mod tests {
 
     #[test]
     fn test_ttl_expiration() {
-        let cache = MemoryCache::<String, String>::new(1);  // 1 second TTL
+        let cache = MemoryCache::<String, String>::new(1); // 1 second TTL
         cache.set("key".to_string(), "value".to_string());
-        
+
         // Should exist immediately
         assert!(cache.get(&"key".to_string()).is_some());
-        
+
         // After cleanup, expired entries removed
         std::thread::sleep(std::time::Duration::from_millis(1100));
         let removed = cache.cleanup_expired();
@@ -205,12 +209,12 @@ mod tests {
     fn test_hit_counting() {
         let cache = MemoryCache::<String, u32>::new(60);
         let key = "counter".to_string();
-        
+
         cache.set(key.clone(), 42);
         cache.get(&key);
         cache.get(&key);
         cache.get(&key);
-        
+
         let entries = cache.entries.lock().unwrap();
         let entry = entries.get(&key).unwrap();
         assert_eq!(entry.hit_count, 3);

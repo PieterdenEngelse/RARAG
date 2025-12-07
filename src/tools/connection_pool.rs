@@ -57,12 +57,12 @@ mod tests {
         let requests_without_pool = 100;
         let conn_time_per_request = 10; // ms
         let total_without = requests_without_pool * conn_time_per_request;
-        
+
         let requests_with_pool = 100;
         let conn_time_first = 10; // ms for first connection
         let conn_time_reuse = 1; // ms for reused connection
         let total_with = conn_time_first + (requests_with_pool - 1) * conn_time_reuse;
-        
+
         let speedup = total_without as f32 / total_with as f32;
         assert!(speedup > 2.0);
     }

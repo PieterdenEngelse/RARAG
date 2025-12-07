@@ -1,9 +1,9 @@
 // src/tools/rate_limiter.rs
 // Optimization #6: Token Bucket Rate Limiter
 
-use tokio::time::{sleep, Duration, Instant};
 use std::sync::Arc;
 use tokio::sync::RwLock;
+use tokio::time::{sleep, Duration, Instant};
 
 pub struct RateLimiter {
     tokens: Arc<RwLock<f64>>,
@@ -29,7 +29,7 @@ impl RateLimiter {
             {
                 let mut t = self.tokens.write().await;
                 let mut last = self.last_refill.write().await;
-                
+
                 let elapsed = last.elapsed().as_secs_f64();
                 *t = (*t + elapsed * self.refill_rate).min(self.max_tokens);
                 *last = Instant::now();
@@ -67,7 +67,7 @@ mod tests {
         // Basic token arithmetic test
         let max_tokens = 10.0;
         let mut tokens = max_tokens;
-        
+
         assert_eq!(tokens, 10.0);
         tokens -= 5.0;
         assert_eq!(tokens, 5.0);
@@ -85,10 +85,10 @@ mod tests {
     async fn test_acquire_with_wait() {
         let limiter = RateLimiter::new(5.0, 1.0);
         let start = Instant::now();
-        
+
         limiter.acquire(5.0).await;
         limiter.acquire(5.0).await;
-        
+
         let elapsed = start.elapsed().as_secs_f64();
         assert!(elapsed >= 4.5);
     }
@@ -105,12 +105,12 @@ mod tests {
     fn test_multiple_acquisitions() {
         let mut tokens = 10.0;
         let mut acquisitions = 0;
-        
+
         while tokens >= 2.0 {
             tokens -= 2.0;
             acquisitions += 1;
         }
-        
+
         assert_eq!(acquisitions, 5);
     }
 }

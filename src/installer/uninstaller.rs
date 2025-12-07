@@ -1,11 +1,11 @@
 // src/installer/uninstaller.rs - Version 13.1.1 - SIMPLIFIED
 
-use std::path::PathBuf;
-use std::fs;
-use std::collections::VecDeque;
-use serde::{Deserialize, Serialize};
+use crate::installer::errors::{InstallerError, InstallerResult};
 use chrono::{DateTime, Utc};
-use crate::installer::errors::{InstallerResult, InstallerError};
+use serde::{Deserialize, Serialize};
+use std::collections::VecDeque;
+use std::fs;
+use std::path::PathBuf;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct UninstallAction {
@@ -144,7 +144,10 @@ pub struct UninstallReport {
 
 impl UninstallReport {
     pub fn display(&self) -> String {
-        format!("Uninstall: {} files, {} dirs", self.files_deleted, self.dirs_deleted)
+        format!(
+            "Uninstall: {} files, {} dirs",
+            self.files_deleted, self.dirs_deleted
+        )
     }
 }
 

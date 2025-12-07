@@ -25,7 +25,7 @@ impl ResultFormatter {
                 }
             }
         }
-        
+
         // Look for any number in the string
         for word in result.split_whitespace() {
             if word.chars().all(|c| c.is_numeric()) {

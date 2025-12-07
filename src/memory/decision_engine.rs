@@ -3,20 +3,18 @@
 // Multi-step reasoning, tool selection, autonomous execution
 
 use serde::{Deserialize, Serialize};
-use tracing::{debug, info};
 use std::sync::Arc;
+use tracing::{debug, info};
 
-use crate::memory::{
-    RagQueryPipeline, RagQueryRequest, AgentMemoryLayer, Episode
-};
+use crate::memory::{AgentMemoryLayer, Episode, RagQueryPipeline, RagQueryRequest};
 
 /// Available tools the agent can use
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub enum Tool {
-    SemanticSearch,      // Search vector store for relevant chunks
-    ReflectOnHistory,    // Analyze past episodes for patterns
-    RefinedSearch,       // Search with adjusted parameters based on reflection
-    DirectAnswer,        // Provide answer from retrieved context
+    SemanticSearch,   // Search vector store for relevant chunks
+    ReflectOnHistory, // Analyze past episodes for patterns
+    RefinedSearch,    // Search with adjusted parameters based on reflection
+    DirectAnswer,     // Provide answer from retrieved context
 }
 
 /// Decision made by the agent
@@ -61,10 +59,7 @@ pub struct DecisionEngine {
 
 impl DecisionEngine {
     /// Create new decision engine
-    pub fn new(
-        rag_pipeline: Arc<RagQueryPipeline>,
-        agent_memory: Arc<AgentMemoryLayer>,
-    ) -> Self {
+    pub fn new(rag_pipeline: Arc<RagQueryPipeline>, agent_memory: Arc<AgentMemoryLayer>) -> Self {
         info!("Initializing Agent Decision Engine");
         Self {
             rag_pipeline,
@@ -79,7 +74,7 @@ impl DecisionEngine {
         goal_id: Option<String>,
     ) -> Result<ExecutionResult, Box<dyn std::error::Error>> {
         info!(query = %query, "Starting agent execution");
-        
+
         let mut reasoning_trace = Vec::new();
         let mut steps_executed = 0;
 
@@ -109,7 +104,10 @@ impl DecisionEngine {
 
             // If past similar queries failed, refine search strategy
             if success_rate < 0.5 {
-                reasoning_trace.push("Past similar queries had low success - will refine search parameters".to_string());
+                reasoning_trace.push(
+                    "Past similar queries had low success - will refine search parameters"
+                        .to_string(),
+                );
             }
         }
 
@@ -141,7 +139,8 @@ impl DecisionEngine {
         // Step 5: Record episode in memory
         reasoning_trace.push("Step 5: Recording episode in memory".to_string());
         let success = !rag_response.answer.is_empty();
-        let _episode = self.agent_memory
+        let _episode = self
+            .agent_memory
             .record_episode(
                 query.to_string(),
                 rag_response.answer.clone(),
@@ -300,7 +299,8 @@ mod tests {
                     std::sync::Arc::new(crate::embedder::EmbeddingService::new(
                         crate::embedder::EmbeddingConfig::default(),
                     )),
-                ).unwrap()
+                )
+                .unwrap(),
             ),
         );
 
@@ -330,7 +330,7 @@ mod tests {
     }
 
     struct MockLLM;
-    
+
     #[async_trait::async_trait]
     impl crate::memory::LLMProvider for MockLLM {
         async fn generate(&self, _prompt: &str) -> Result<String, crate::memory::LLMError> {

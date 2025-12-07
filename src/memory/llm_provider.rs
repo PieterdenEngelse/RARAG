@@ -5,7 +5,6 @@
 use serde::{Deserialize, Serialize};
 use tracing::{debug, info, warn};
 
-
 /// LLM Provider trait - implement this to support new models
 #[async_trait::async_trait]
 
@@ -18,25 +17,13 @@ pub trait LLMProvider: Send + Sync {
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub enum LLMConfig {
     /// Phi 3.5 via Ollama (default, minimal resources)
-    Phi35Ollama {
-        ollama_url: String,
-        model: String,
-    },
+    Phi35Ollama { ollama_url: String, model: String },
     /// Qwen 7B via Ollama (multilingual)
-    QwenOllama {
-        ollama_url: String,
-        model: String,
-    },
+    QwenOllama { ollama_url: String, model: String },
     /// Mistral 7B via Ollama
-    MistralOllama {
-        ollama_url: String,
-        model: String,
-    },
+    MistralOllama { ollama_url: String, model: String },
     /// OpenAI API (requires API key)
-    OpenAI {
-        api_key: String,
-        model: String,
-    },
+    OpenAI { api_key: String, model: String },
 }
 
 impl Default for LLMConfig {
@@ -100,11 +87,9 @@ impl OllamaProvider {
 
     async fn health_check(&self) -> Result<(), LLMError> {
         let health_url = format!("{}/api/tags", self.url);
-        self.client
-            .get(&health_url)
-            .send()
-            .await
-            .map_err(|e| LLMError::ConnectionFailed(format!("Cannot reach Ollama at {}: {}", self.url, e)))?;
+        self.client.get(&health_url).send().await.map_err(|e| {
+            LLMError::ConnectionFailed(format!("Cannot reach Ollama at {}: {}", self.url, e))
+        })?;
         Ok(())
     }
 }
@@ -152,44 +137,33 @@ impl LLMProvider for OllamaProvider {
 /// Factory function to create LLM provider from config
 pub async fn create_llm_provider(config: LLMConfig) -> Result<Box<dyn LLMProvider>, LLMError> {
     match config {
-        LLMConfig::Phi35Ollama {
-            ollama_url,
-            model,
-        } => {
+        LLMConfig::Phi35Ollama { ollama_url, model } => {
             info!("Initializing Phi 3.5 via Ollama at {}", ollama_url);
             let provider = OllamaProvider::new(ollama_url, model);
-            provider
-                .health_check()
-                .await
-                .map_err(|e| {
-                    warn!("Failed to connect to Ollama. Make sure it's running: ollama serve");
-                    e
-                })?;
+            provider.health_check().await.map_err(|e| {
+                warn!("Failed to connect to Ollama. Make sure it's running: ollama serve");
+                e
+            })?;
             Ok(Box::new(provider))
         }
-        LLMConfig::QwenOllama {
-            ollama_url,
-            model,
-        } => {
+        LLMConfig::QwenOllama { ollama_url, model } => {
             info!("Initializing Qwen via Ollama at {}", ollama_url);
             let provider = OllamaProvider::new(ollama_url, model);
             provider.health_check().await?;
             Ok(Box::new(provider))
         }
-        LLMConfig::MistralOllama {
-            ollama_url,
-            model,
-        } => {
+        LLMConfig::MistralOllama { ollama_url, model } => {
             info!("Initializing Mistral via Ollama at {}", ollama_url);
             let provider = OllamaProvider::new(ollama_url, model);
             provider.health_check().await?;
             Ok(Box::new(provider))
         }
-        LLMConfig::OpenAI { api_key: _, model: _ } => {
-            Err(LLMError::ConfigError(
-                "OpenAI provider not yet implemented".to_string(),
-            ))
-        }
+        LLMConfig::OpenAI {
+            api_key: _,
+            model: _,
+        } => Err(LLMError::ConfigError(
+            "OpenAI provider not yet implemented".to_string(),
+        )),
     }
 }
 
@@ -210,10 +184,8 @@ mod tests {
 
     #[test]
     fn test_ollama_provider_creation() {
-        let provider = OllamaProvider::new(
-            "http://localhost:11434".to_string(),
-            "phi:3.5".to_string(),
-        );
+        let provider =
+            OllamaProvider::new("http://localhost:11434".to_string(), "phi:3.5".to_string());
         assert_eq!(provider.model_name(), "phi:3.5");
     }
 

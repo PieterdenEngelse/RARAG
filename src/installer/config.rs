@@ -2,10 +2,10 @@
 // Version: 13.1.1
 // Installation configuration management with installer impact tracking
 
-use serde::{Deserialize, Serialize};
-use std::path::PathBuf;
 use crate::installer::errors::InstallerResult;
+use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
+use std::path::PathBuf;
 
 /// Installation phase tracking for impact analysis
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Hash)]
@@ -51,34 +51,34 @@ impl std::fmt::Display for InstallationPhase {
 pub struct InstallerImpact {
     /// Directories created during installation
     pub directories_created: Vec<PathBuf>,
-    
+
     /// Configuration files written
     pub config_files_written: Vec<PathBuf>,
-    
+
     /// Database files created
     pub database_files: Vec<PathBuf>,
-    
+
     /// Index files created
     pub index_files: Vec<PathBuf>,
-    
+
     /// Environment variables set
     pub env_vars_set: HashMap<String, String>,
-    
+
     /// Service ports claimed
     pub ports_claimed: HashMap<String, u16>,
-    
+
     /// Installation timestamp
     pub installed_at: String,
-    
+
     /// Installation phase reached
     pub current_phase: InstallationPhase,
-    
+
     /// Total installation duration (seconds)
     pub duration_secs: u64,
-    
+
     /// Rollback state - can we safely uninstall?
     pub is_rollbackable: bool,
-    
+
     /// Preserve user data on uninstall
     pub preserve_data_on_uninstall: bool,
 }
@@ -246,70 +246,70 @@ PORTS ALLOCATED: ({})
 pub struct InstallerConfig {
     /// Installation prefix directory
     pub install_prefix: PathBuf,
-    
+
     /// Data directory for documents and indices
     pub data_dir: PathBuf,
-    
+
     /// Configuration directory
     pub config_dir: PathBuf,
-    
+
     /// Cache directory
     pub cache_dir: PathBuf,
-    
+
     /// Log directory
     pub log_dir: PathBuf,
-    
+
     /// Backend configuration directory
     pub backend_config_dir: PathBuf,
-    
+
     /// Frontend build directory
     pub frontend_build_dir: PathBuf,
-    
+
     /// Backend port
     pub backend_port: u16,
-    
+
     /// Frontend port
     pub frontend_port: u16,
-    
+
     /// API host
     pub api_host: String,
-    
+
     /// Enable development mode
     pub dev_mode: bool,
-    
+
     /// Enable logging
     pub enable_logging: bool,
-    
+
     /// Log level
     pub log_level: String,
-    
+
     /// Maximum document size in MB
     pub max_document_size_mb: u32,
-    
+
     /// Chunk size for document processing
     pub chunk_size: usize,
-    
+
     /// Vector dimension
     pub vector_dimension: usize,
-    
+
     /// Database path
     pub db_path: PathBuf,
-    
+
     /// Index path
     pub index_path: PathBuf,
-    
+
     /// Installation timestamp
     pub installed_at: String,
-    
+
     /// Installer version
     pub installer_version: String,
-    
+
     /// Installation impact tracking
     pub impact: InstallerImpact,
-    
+
     /// Preserve user data on uninstall
     pub preserve_data_on_uninstall: bool,
-    
+
     /// Configuration metadata version
     pub config_version: String,
 }
@@ -318,7 +318,7 @@ impl Default for InstallerConfig {
     fn default() -> Self {
         let home = dirs::home_dir().expect("Could not determine home directory");
         let install_prefix = home.join(".ag");
-        
+
         Self {
             data_dir: install_prefix.join("data"),
             config_dir: install_prefix.join("config"),
@@ -336,10 +336,8 @@ impl Default for InstallerConfig {
             max_document_size_mb: 100,
             chunk_size: 512,
             vector_dimension: 384,
-            db_path: home
-                .join(".ag/data/agent.db"),
-            index_path: home
-                .join(".ag/data/tantivy_index"),
+            db_path: home.join(".ag/data/agent.db"),
+            index_path: home.join(".ag/data/tantivy_index"),
             installed_at: chrono::Utc::now().to_rfc3339(),
             installer_version: "13.1.1".to_string(),
             impact: InstallerImpact::default(),
@@ -407,37 +405,47 @@ impl InstallerConfig {
     pub fn validate(&self) -> InstallerResult<()> {
         // Check port ranges
         if self.backend_port == 0 || self.backend_port == self.frontend_port {
-            return Err(crate::installer::errors::InstallerError::InvalidConfiguration(
-                "Invalid port configuration".to_string(),
-            ));
+            return Err(
+                crate::installer::errors::InstallerError::InvalidConfiguration(
+                    "Invalid port configuration".to_string(),
+                ),
+            );
         }
 
         // Check directory paths
         if self.data_dir.as_os_str().is_empty() {
-            return Err(crate::installer::errors::InstallerError::InvalidConfiguration(
-                "Data directory not set".to_string(),
-            ));
+            return Err(
+                crate::installer::errors::InstallerError::InvalidConfiguration(
+                    "Data directory not set".to_string(),
+                ),
+            );
         }
 
         // Check document size
         if self.max_document_size_mb == 0 {
-            return Err(crate::installer::errors::InstallerError::InvalidConfiguration(
-                "Maximum document size must be > 0".to_string(),
-            ));
+            return Err(
+                crate::installer::errors::InstallerError::InvalidConfiguration(
+                    "Maximum document size must be > 0".to_string(),
+                ),
+            );
         }
 
         // Check chunk size
         if self.chunk_size == 0 {
-            return Err(crate::installer::errors::InstallerError::InvalidConfiguration(
-                "Chunk size must be > 0".to_string(),
-            ));
+            return Err(
+                crate::installer::errors::InstallerError::InvalidConfiguration(
+                    "Chunk size must be > 0".to_string(),
+                ),
+            );
         }
 
         // Check vector dimension
         if self.vector_dimension == 0 {
-            return Err(crate::installer::errors::InstallerError::InvalidConfiguration(
-                "Vector dimension must be > 0".to_string(),
-            ));
+            return Err(
+                crate::installer::errors::InstallerError::InvalidConfiguration(
+                    "Vector dimension must be > 0".to_string(),
+                ),
+            );
         }
 
         Ok(())
@@ -646,7 +654,7 @@ mod tests {
         impact.track_directory(PathBuf::from("/test/dir"));
         impact.track_port("backend".to_string(), 8000);
         impact.track_env_var("TEST".to_string(), "value".to_string());
-        
+
         assert_eq!(impact.directories_created.len(), 1);
         assert_eq!(impact.ports_claimed.len(), 1);
         assert_eq!(impact.env_vars_set.len(), 1);

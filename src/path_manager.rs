@@ -1,6 +1,6 @@
 // ag/src/path_manager.rs v13.1.2
-use std::path::{Path, PathBuf};
 use std::env;
+use std::path::{Path, PathBuf};
 use thiserror::Error;
 
 #[derive(Error, Debug)]
@@ -50,11 +50,9 @@ impl PathManager {
     fn get_base_dir() -> Result<PathBuf, PathError> {
         match env::var("AG_HOME") {
             Ok(path) => Ok(PathBuf::from(path)),
-            Err(_) => {
-                dirs::data_local_dir()
-                    .ok_or_else(|| PathError::EnvVarNotSet("AG_HOME or platform data dir".into()))
-                    .map(|p| p.join("ag"))
-            }
+            Err(_) => dirs::data_local_dir()
+                .ok_or_else(|| PathError::EnvVarNotSet("AG_HOME or platform data dir".into()))
+                .map(|p| p.join("ag")),
         }
     }
 

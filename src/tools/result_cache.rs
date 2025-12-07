@@ -1,11 +1,11 @@
 // src/tools/result_cache.rs - PRODUCTION
 // Phase 10 Optimization: Result Caching System
 
+use crate::tools::ToolResult;
 use std::collections::HashMap;
 use std::sync::Arc;
+use std::time::{Duration, Instant};
 use tokio::sync::RwLock;
-use std::time::{Instant, Duration};
-use crate::tools::ToolResult;
 
 #[derive(Clone, Debug)]
 pub struct CachedResult {
@@ -35,14 +35,14 @@ impl ResultCache {
     pub async fn get(&self, tool_type: &str, query: &str) -> Option<ToolResult> {
         let cache = self.cache.read().await;
         let key = Self::cache_key(tool_type, query);
-        
+
         if let Some(cached) = cache.get(&key) {
             // Check if expired
             if cached.timestamp.elapsed() < self.ttl {
                 return Some(cached.result.clone());
             }
         }
-        
+
         None
     }
 
@@ -50,11 +50,14 @@ impl ResultCache {
     pub async fn set(&self, tool_type: &str, query: String, result: ToolResult) {
         let mut cache = self.cache.write().await;
         let key = Self::cache_key(tool_type, &query);
-        
-        cache.insert(key, CachedResult {
-            result,
-            timestamp: Instant::now(),
-        });
+
+        cache.insert(
+            key,
+            CachedResult {
+                result,
+                timestamp: Instant::now(),
+            },
+        );
     }
 
     /// Clear expired entries
@@ -83,7 +86,7 @@ mod tests {
     #[tokio::test]
     async fn test_cache_set_get() {
         let cache = ResultCache::new(60);
-        
+
         let result = ToolResult {
             tool: crate::tools::ToolType::Calculator,
             success: true,
@@ -95,17 +98,19 @@ mod tests {
                 cost: None,
             },
         };
-        
-        cache.set("calculator", "5 + 0".to_string(), result.clone()).await;
+
+        cache
+            .set("calculator", "5 + 0".to_string(), result.clone())
+            .await;
         let retrieved = cache.get("calculator", "5 + 0").await;
-        
+
         assert!(retrieved.is_some());
     }
 
     #[tokio::test]
     async fn test_cache_expiry() {
         let cache = ResultCache::new(1);
-        
+
         let result = ToolResult {
             tool: crate::tools::ToolType::Calculator,
             success: true,
@@ -117,10 +122,10 @@ mod tests {
                 cost: None,
             },
         };
-        
+
         cache.set("calculator", "5 + 0".to_string(), result).await;
         assert!(cache.get("calculator", "5 + 0").await.is_some());
-        
+
         tokio::time::sleep(Duration::from_secs(2)).await;
         assert!(cache.get("calculator", "5 + 0").await.is_none());
     }

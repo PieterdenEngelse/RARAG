@@ -1,0 +1,17 @@
+[Unit]
+Description=Dioxus Frontend Development Server
+After=network.target
+
+[Service]
+Type=simple
+User=pde
+WorkingDirectory=/home/pde/ag/frontend/fro
+ExecStart=/home/pde/ag/frontend/fro/start-dioxus-service.sh
+Restart=on-failure
+RestartSec=5
+Environment=PATH=/home/pde/.cargo/bin:/usr/local/bin:/usr/bin:/bin
+Environment=RUST_LOG=trace,dioxus=debug
+Environment=RUST_BACKTRACE=1
+
+[Install]
+WantedBy=multi-user.target

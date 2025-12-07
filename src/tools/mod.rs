@@ -2,27 +2,25 @@
 // Phase 9: Tool Registry and Interfaces
 // Provides tool abstraction for agent decision engine
 
-use serde::{Deserialize, Serialize};
 use async_trait::async_trait;
+use serde::{Deserialize, Serialize};
 
-pub mod web_search;
 pub mod calculator;
-pub mod url_fetch;
-pub mod tool_selector;
+pub mod query_optimizer;
+pub mod result_cache;
+pub mod result_compressor;
+pub mod result_formatter;
 pub mod tool_composer;
 pub mod tool_executor;
-pub mod result_formatter;
-pub mod result_cache;
-pub mod query_optimizer;
-pub mod result_compressor;
+pub mod tool_selector;
+pub mod url_fetch;
+pub mod web_search;
 pub use query_optimizer::QueryOptimizer;
 pub use result_compressor::ResultCompressor;
-pub mod rate_limiter;
 pub mod connection_pool;
-pub use rate_limiter::RateLimiter;
+pub mod rate_limiter;
 pub use connection_pool::ConnectionPool;
-
-
+pub use rate_limiter::RateLimiter;
 
 // ============ Tool Types ============
 
@@ -76,9 +74,9 @@ pub trait Tool: Send + Sync {
     fn tool_type(&self) -> ToolType;
     fn description(&self) -> String;
     fn success_rate(&self) -> f32;
-    
+
     async fn execute(&self, query: &str) -> Result<ToolResult, String>;
-    
+
     fn update_success(&mut self, success: bool);
 }
 
@@ -140,15 +138,25 @@ impl ToolRegistry {
         self.tool_stats.get(&name).cloned()
     }
 
-    pub fn update_stats(&mut self, tool_type: &ToolType, time_ms: u64, success: bool, confidence: f32) {
+    pub fn update_stats(
+        &mut self,
+        tool_type: &ToolType,
+        time_ms: u64,
+        success: bool,
+        confidence: f32,
+    ) {
         let name = tool_type.to_string();
         if let Some(stats) = self.tool_stats.get_mut(&name) {
             stats.executions += 1;
             if success {
                 stats.successes += 1;
             }
-            stats.avg_time_ms = (stats.avg_time_ms * (stats.executions - 1) as f32 + time_ms as f32) / stats.executions as f32;
-            stats.avg_confidence = (stats.avg_confidence * (stats.executions - 1) as f32 + confidence) / stats.executions as f32;
+            stats.avg_time_ms = (stats.avg_time_ms * (stats.executions - 1) as f32
+                + time_ms as f32)
+                / stats.executions as f32;
+            stats.avg_confidence = (stats.avg_confidence * (stats.executions - 1) as f32
+                + confidence)
+                / stats.executions as f32;
         }
     }
 }

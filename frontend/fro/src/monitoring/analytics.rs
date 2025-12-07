@@ -1,5 +1,5 @@
 //! Frontend analytics tracking
-//! 
+//!
 //! Tracks:
 //! - API calls and performance
 //! - Component lifecycle events
@@ -37,9 +37,9 @@ impl Analytics {
             crate::monitoring::logger::Logger::log_info("Analytics initialized");
         });
     }
-    
+
     /// Track an API call
-    /// 
+    ///
     /// Usage:
     /// ```rust,ignore
     /// Analytics::track_api_call("/search", 45.5, 200);
@@ -52,17 +52,20 @@ impl Analytics {
             duration_ms,
             timestamp: chrono::Local::now().format("%H:%M:%S%.3f").to_string(),
         };
-        
+
         // Log to console
-        web_sys::console::log_1(&format!(
-            "API Call: {} {} {}ms (status: {})",
-            call.method, call.endpoint, call.duration_ms, call.status
-        ).into());
-        
+        web_sys::console::log_1(
+            &format!(
+                "API Call: {} {} {}ms (status: {})",
+                call.method, call.endpoint, call.duration_ms, call.status
+            )
+            .into(),
+        );
+
         // Store in local buffer
         Self::store_api_call(call);
     }
-    
+
     /// Track component mount
     pub fn track_component_mount(component: &str) {
         let event = ComponentEvent {
@@ -70,10 +73,10 @@ impl Analytics {
             event: "mount".to_string(),
             timestamp: chrono::Local::now().format("%H:%M:%S%.3f").to_string(),
         };
-        
+
         Self::log_component_event(&event);
     }
-    
+
     /// Track component unmount
     pub fn track_component_unmount(component: &str) {
         let event = ComponentEvent {
@@ -81,41 +84,37 @@ impl Analytics {
             event: "unmount".to_string(),
             timestamp: chrono::Local::now().format("%H:%M:%S%.3f").to_string(),
         };
-        
+
         Self::log_component_event(&event);
     }
-    
+
     /// Track component error
     pub fn track_component_error(component: &str, error: &str) {
-        crate::monitoring::logger::Logger::error(&format!(
-            "{}: {}",
-            component, error
-        ));
-        
+        crate::monitoring::logger::Logger::error(&format!("{}: {}", component, error));
+
         let event = ComponentEvent {
             component: component.to_string(),
             event: format!("error: {}", error),
             timestamp: chrono::Local::now().format("%H:%M:%S%.3f").to_string(),
         };
-        
+
         Self::log_component_event(&event);
     }
-    
+
     /// Log component event
     fn log_component_event(event: &ComponentEvent) {
-        web_sys::console::log_1(&format!(
-            "[{}] {} {}",
-            event.timestamp, event.component, event.event
-        ).into());
+        web_sys::console::log_1(
+            &format!("[{}] {} {}", event.timestamp, event.component, event.event).into(),
+        );
     }
-    
+
     /// Store API call in memory
     fn store_api_call(call: ApiCall) {
         // Store in thread-local or global state
         // Placeholder for Phase 15 enhancement
         let _ = call;
     }
-    
+
     /// Get statistics
     pub fn get_statistics() -> serde_json::Value {
         json!({
@@ -124,7 +123,7 @@ impl Analytics {
             "components": [],
         })
     }
-    
+
     /// Export analytics as JSON
     pub fn export() -> String {
         Self::get_statistics().to_string()
@@ -134,7 +133,7 @@ impl Analytics {
 #[cfg(all(test, target_arch = "wasm32"))]
 mod tests {
     use super::*;
-    
+
     #[test]
     fn test_analytics_init() {
         Analytics::init();

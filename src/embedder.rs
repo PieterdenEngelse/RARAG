@@ -46,17 +46,16 @@ pub struct EmbeddingService {
 impl EmbeddingService {
     /// Create a new embedding service
     pub fn new(config: EmbeddingConfig) -> Self {
-        let cache_size = NonZeroUsize::new(config.cache_size)
-            .expect("cache_size must be > 0");
-        
+        let cache_size = NonZeroUsize::new(config.cache_size).expect("cache_size must be > 0");
+
         let cache = LruCache::new(cache_size);
-        
+
         info!(
             batch_size = config.batch_size,
             cache_size = config.cache_size,
             "Initializing EmbeddingService"
         );
-        
+
         Self {
             config,
             cache: Arc::new(RwLock::new(cache)),
@@ -66,7 +65,7 @@ impl EmbeddingService {
     /// Embed a single text, with cache lookup
     pub async fn embed_text(&self, text: &str) -> EmbeddingVector {
         let key = format!("{:x}", seahash::hash(text.as_bytes()));
-        
+
         // Check cache first
         {
             let mut cache = self.cache.write().await;
@@ -77,7 +76,7 @@ impl EmbeddingService {
         }
 
         debug!(text_len = text.len(), "Generating embedding");
-        
+
         // Generate embedding
         let embedding = embed(text);
 
@@ -92,10 +91,14 @@ impl EmbeddingService {
 
     /// Embed multiple texts in batches (efficient for bulk operations)
     pub async fn embed_batch(&self, texts: &[&str]) -> Vec<EmbeddingVector> {
-        info!(total_texts = texts.len(), batch_size = self.config.batch_size, "Starting batch embedding");
-        
+        info!(
+            total_texts = texts.len(),
+            batch_size = self.config.batch_size,
+            "Starting batch embedding"
+        );
+
         let mut results = Vec::new();
-        
+
         for batch in texts.chunks(self.config.batch_size) {
             for text in batch {
                 results.push(self.embed_text(text).await);
@@ -103,17 +106,27 @@ impl EmbeddingService {
             // Yield to tokio runtime to avoid blocking
             tokio::task::yield_now().await;
         }
-        
-        info!(total_embeddings = results.len(), "Batch embedding completed");
+
+        info!(
+            total_embeddings = results.len(),
+            "Batch embedding completed"
+        );
         results
     }
 
     /// Embed multiple texts with indices (preserves order)
-    pub async fn embed_indexed_batch(&self, texts: &[(usize, &str)]) -> Vec<(usize, EmbeddingVector)> {
-        info!(total_texts = texts.len(), batch_size = self.config.batch_size, "Starting indexed batch embedding");
-        
+    pub async fn embed_indexed_batch(
+        &self,
+        texts: &[(usize, &str)],
+    ) -> Vec<(usize, EmbeddingVector)> {
+        info!(
+            total_texts = texts.len(),
+            batch_size = self.config.batch_size,
+            "Starting indexed batch embedding"
+        );
+
         let mut results = Vec::new();
-        
+
         for batch in texts.chunks(self.config.batch_size) {
             for (idx, text) in batch {
                 let embedding = self.embed_text(text).await;
@@ -121,8 +134,11 @@ impl EmbeddingService {
             }
             tokio::task::yield_now().await;
         }
-        
-        info!(total_embeddings = results.len(), "Indexed batch embedding completed");
+
+        info!(
+            total_embeddings = results.len(),
+            "Indexed batch embedding completed"
+        );
         results
     }
 
@@ -165,11 +181,11 @@ pub mod similarity {
         if a.is_empty() || b.is_empty() {
             return 0.0;
         }
-        
+
         let dot: f32 = a.iter().zip(b.iter()).map(|(x, y)| x * y).sum();
         let mag_a: f32 = a.iter().map(|x| x * x).sum::<f32>().sqrt();
         let mag_b: f32 = b.iter().map(|x| x * x).sum::<f32>().sqrt();
-        
+
         if mag_a == 0.0 || mag_b == 0.0 {
             0.0
         } else {
@@ -182,7 +198,7 @@ pub mod similarity {
         if a.is_empty() || b.is_empty() {
             return f32::INFINITY;
         }
-        
+
         a.iter()
             .zip(b.iter())
             .map(|(x, y)| (x - y).powi(2))
@@ -200,7 +216,7 @@ pub mod similarity {
             .iter()
             .map(|(idx, emb)| (*idx, cosine_similarity(query_embedding, emb)))
             .collect();
-        
+
         scores.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
         scores.truncate(k);
         scores
@@ -222,7 +238,7 @@ mod tests {
     async fn test_embedding_service_creation() {
         let config = EmbeddingConfig::default();
         let service = EmbeddingService::new(config);
-        
+
         let stats = service.cache_stats().await;
         assert_eq!(stats.len, 0);
     }
@@ -230,7 +246,7 @@ mod tests {
     #[tokio::test]
     async fn test_embed_text() {
         let service = EmbeddingService::new(EmbeddingConfig::default());
-        
+
         let embedding = service.embed_text("test query").await;
         assert_eq!(embedding.len(), 384);
     }
@@ -238,15 +254,15 @@ mod tests {
     #[tokio::test]
     async fn test_embedding_cache_hit() {
         let service = EmbeddingService::new(EmbeddingConfig::default());
-        
+
         // First call
         let result1 = service.embed_text("test").await;
-        
+
         // Second call (should hit cache)
         let result2 = service.embed_text("test").await;
-        
+
         assert_eq!(result1, result2);
-        
+
         let stats = service.cache_stats().await;
         assert_eq!(stats.len, 1);
     }
@@ -260,7 +276,7 @@ mod tests {
 
         let texts = vec!["text 1", "text 2", "text 3"];
         let results = service.embed_batch(&texts).await;
-        
+
         assert_eq!(results.len(), 3);
         assert!(results.iter().all(|v| v.len() == 384));
     }
@@ -271,7 +287,7 @@ mod tests {
 
         let texts = vec![(0usize, "text 1"), (1usize, "text 2"), (2usize, "text 3")];
         let results = service.embed_indexed_batch(&texts).await;
-        
+
         assert_eq!(results.len(), 3);
         assert_eq!(results[0].0, 0);
         assert_eq!(results[1].0, 1);
@@ -281,14 +297,14 @@ mod tests {
     #[tokio::test]
     async fn test_clear_cache() {
         let service = EmbeddingService::new(EmbeddingConfig::default());
-        
+
         let _ = service.embed_text("test").await;
-        
+
         let stats = service.cache_stats().await;
         assert!(stats.len > 0);
-        
+
         service.clear_cache().await;
-        
+
         let stats = service.cache_stats().await;
         assert_eq!(stats.len, 0);
     }
@@ -298,7 +314,7 @@ mod tests {
         let v1 = vec![1.0, 0.0, 0.0];
         let v2 = vec![1.0, 0.0, 0.0];
         let v3 = vec![0.0, 1.0, 0.0];
-        
+
         assert!((similarity::cosine_similarity(&v1, &v2) - 1.0).abs() < 0.001);
         assert!((similarity::cosine_similarity(&v1, &v3)).abs() < 0.001);
     }
@@ -309,13 +325,9 @@ mod tests {
         let v1 = vec![1.0, 0.0];
         let v2 = vec![0.0, 1.0];
         let v3 = vec![0.9, 0.1];
-        
-        let candidates = vec![
-            (0, &v1),
-            (1, &v2),
-            (2, &v3),
-        ];
-        
+
+        let candidates = vec![(0, &v1), (1, &v2), (2, &v3)];
+
         let results = similarity::top_k_similar(&query, &candidates, 2);
         assert_eq!(results.len(), 2);
         assert_eq!(results[0].0, 0); // Most similar

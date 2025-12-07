@@ -17,8 +17,8 @@ use actix_web::{
 use futures_util::future::LocalBoxFuture;
 use std::sync::Arc;
 
+use crate::monitoring::metrics::{RATE_LIMIT_DROPS_BY_ROUTE, RATE_LIMIT_DROPS_TOTAL};
 use crate::security::rate_limiter::RateLimiter;
-use crate::monitoring::metrics::{RATE_LIMIT_DROPS_TOTAL, RATE_LIMIT_DROPS_BY_ROUTE};
 use actix_web::body::EitherBody;
 use serde::{Deserialize, Serialize};
 use tracing::warn;
@@ -68,7 +68,10 @@ fn extract_client_ip(req: &ServiceRequest, trust_proxy: bool) -> String {
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
-pub enum MatchKind { Exact, Prefix }
+pub enum MatchKind {
+    Exact,
+    Prefix,
+}
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct RouteRule {
@@ -98,7 +101,10 @@ impl RateLimitOptions {
     /// - RATE_LIMIT_EXEMPT_PREFIXES: JSON array of strings (fallback)
     pub fn with_env_overrides(mut self) -> Self {
         #[derive(Deserialize)]
-        struct RoutesFile { routes: Option<Vec<RouteRule>>, exempt_prefixes: Option<Vec<String>> }
+        struct RoutesFile {
+            routes: Option<Vec<RouteRule>>,
+            exempt_prefixes: Option<Vec<String>>,
+        }
 
         fn parse_json(input: &str) -> (Option<Vec<RouteRule>>, Option<Vec<String>>) {
             if let Ok(rules) = serde_json::from_str::<Vec<RouteRule>>(input) {
@@ -112,8 +118,12 @@ impl RateLimitOptions {
 
         if let Ok(val) = std::env::var("RATE_LIMIT_ROUTES") {
             let (rules, exempt) = parse_json(&val);
-            if let Some(rules) = rules { self.rules = rules; }
-            if let Some(ex) = exempt { self.exempt_prefixes = ex; }
+            if let Some(rules) = rules {
+                self.rules = rules;
+            }
+            if let Some(ex) = exempt {
+                self.exempt_prefixes = ex;
+            }
         } else if let Ok(path) = std::env::var("RATE_LIMIT_ROUTES_FILE") {
             match std::fs::read_to_string(&path) {
                 Ok(text) => {
@@ -129,7 +139,10 @@ impl RateLimitOptions {
                                 Err(_) => {
                                     // Try object form
                                     #[derive(Deserialize)]
-                                    struct YamlFile { routes: Option<Vec<RouteRule>>, exempt_prefixes: Option<Vec<String>> }
+                                    struct YamlFile {
+                                        routes: Option<Vec<RouteRule>>,
+                                        exempt_prefixes: Option<Vec<String>>,
+                                    }
                                     if let Ok(cfg) = serde_yaml::from_str::<YamlFile>(&text) {
                                         rules = cfg.routes;
                                         exempt = cfg.exempt_prefixes;
@@ -145,8 +158,12 @@ impl RateLimitOptions {
                         }
                     }
 
-                    if let Some(rules) = rules { self.rules = rules; }
-                    if let Some(ex) = exempt { self.exempt_prefixes = ex; }
+                    if let Some(rules) = rules {
+                        self.rules = rules;
+                    }
+                    if let Some(ex) = exempt {
+                        self.exempt_prefixes = ex;
+                    }
                 }
                 Err(e) => {
                     warn!(file = %path, error = %e, "Failed to read RATE_LIMIT_ROUTES_FILE");
@@ -155,7 +172,9 @@ impl RateLimitOptions {
         }
 
         if let Ok(val) = std::env::var("RATE_LIMIT_EXEMPT_PREFIXES") {
-            if let Ok(list) = serde_json::from_str::<Vec<String>>(&val) { self.exempt_prefixes = list; }
+            if let Ok(list) = serde_json::from_str::<Vec<String>>(&val) {
+                self.exempt_prefixes = list;
+            }
         }
         self
     }
@@ -167,9 +186,17 @@ impl RateLimitOptions {
             || path.starts_with("/memory/store_rag")
             || method == "DELETE"
         {
-            (self.upload_qps.max(0.0), self.upload_burst.max(0.0), "upload".to_string())
+            (
+                self.upload_qps.max(0.0),
+                self.upload_burst.max(0.0),
+                "upload".to_string(),
+            )
         } else {
-            (self.search_qps.max(0.0), self.search_burst.max(0.0), "search".to_string())
+            (
+                self.search_qps.max(0.0),
+                self.search_burst.max(0.0),
+                "search".to_string(),
+            )
         }
     }
 
@@ -189,7 +216,10 @@ impl RateLimitOptions {
                 MatchKind::Prefix => path.starts_with(&r.pattern),
             };
             if is_match {
-                let label = r.label.clone().unwrap_or_else(|| req.match_pattern().unwrap_or(path.to_string()));
+                let label = r
+                    .label
+                    .clone()
+                    .unwrap_or_else(|| req.match_pattern().unwrap_or(path.to_string()));
                 return Some((r.qps.max(0.0), r.burst.max(0.0), label));
             }
         }
@@ -258,7 +288,10 @@ where
 
         if let Some((qps, burst, route_label)) = self.opts.for_request(&req) {
             // Optional debug logging for tests
-            if std::env::var("RATE_LIMIT_DEBUG_LOG").map(|v| v.to_lowercase() == "true" || v == "1").unwrap_or(false) {
+            if std::env::var("RATE_LIMIT_DEBUG_LOG")
+                .map(|v| v.to_lowercase() == "true" || v == "1")
+                .unwrap_or(false)
+            {
                 tracing::info!(client_ip=%client_ip, route=%route_label, qps=%qps, burst=%burst, "rate_limit_check");
             }
             // Build per-route+IP key to isolate budgets
@@ -277,7 +310,9 @@ where
 
                 // Increment metrics
                 RATE_LIMIT_DROPS_TOTAL.inc();
-                RATE_LIMIT_DROPS_BY_ROUTE.with_label_values(&[&route_label]).inc();
+                RATE_LIMIT_DROPS_BY_ROUTE
+                    .with_label_values(&[&route_label])
+                    .inc();
 
                 return Box::pin(async move {
                     let resp = HttpResponse::TooManyRequests()
@@ -328,11 +363,11 @@ mod tests {
             max_ips: 100,
         };
         let limiter = std::sync::Arc::new(crate::security::rate_limiter::RateLimiter::new(config));
-        let opts = RateLimitOptions { 
-            trust_proxy: true, 
-            search_qps: 5.0, 
-            search_burst: 10.0, 
-            upload_qps: 2.0, 
+        let opts = RateLimitOptions {
+            trust_proxy: true,
+            search_qps: 5.0,
+            search_burst: 10.0,
+            upload_qps: 2.0,
             upload_burst: 5.0,
             exempt_prefixes: vec![],
             rules: vec![],

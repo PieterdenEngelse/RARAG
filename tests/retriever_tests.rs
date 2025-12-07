@@ -1,14 +1,11 @@
+use ag::retriever::{Retriever, RetrieverError};
 use std::path::Path;
 use tempfile::tempdir;
-use ag::retriever::{Retriever, RetrieverError};
 
 /// Helper to create a retriever with a temporary index directory and vector file
 fn make_retriever_with_vector_file(temp_dir: &Path, vector_file: &Path) -> Retriever {
-    Retriever::new_with_vector_file(
-        temp_dir.to_str().unwrap(),
-        vector_file.to_str().unwrap(),
-    )
-    .expect("Failed to create retriever")
+    Retriever::new_with_vector_file(temp_dir.to_str().unwrap(), vector_file.to_str().unwrap())
+        .expect("Failed to create retriever")
 }
 
 #[cfg(test)]
@@ -21,9 +18,7 @@ mod tests {
         let vector_file = dir.path().join("vectors.json");
         let mut retriever = make_retriever_with_vector_file(dir.path(), &vector_file);
 
-        retriever
-            .begin_batch()
-            .expect("Failed to start batch mode");
+        retriever.begin_batch().expect("Failed to start batch mode");
 
         let docs = vec![
             (
@@ -144,14 +139,14 @@ mod tests {
         let results = retriever.vector_search(&query, 3);
 
         assert_eq!(results.len(), 3, "Should return all 3 vectors");
-        
+
         // Identical vectors should have highest similarity (~1.0)
         assert!(
             results[0].1 > 0.99,
             "Identical vectors should have similarity ~1.0, got {}",
             results[0].1
         );
-        
+
         // Orthogonal vector should have lowest similarity (~0.0)
         assert!(
             results[2].1.abs() < 0.1,
@@ -167,11 +162,18 @@ mod tests {
         let mut retriever = make_retriever_with_vector_file(dir.path(), &vector_file);
 
         retriever
-            .add_document("test_doc_1", "Test Title", "This is test content about Rust")
+            .add_document(
+                "test_doc_1",
+                "Test Title",
+                "This is test content about Rust",
+            )
             .expect("Failed to add document");
 
         let results = retriever.search("Rust").expect("Search failed");
-        assert!(!results.is_empty(), "Search should return results for 'Rust'");
+        assert!(
+            !results.is_empty(),
+            "Search should return results for 'Rust'"
+        );
         assert_eq!(
             results[0], "This is test content about Rust",
             "First result should match the added document content"
@@ -262,10 +264,7 @@ mod tests {
         );
 
         let metrics = retriever.get_metrics();
-        assert_eq!(
-            metrics.total_vectors, 3,
-            "Should have 3 vectors in storage"
-        );
+        assert_eq!(metrics.total_vectors, 3, "Should have 3 vectors in storage");
     }
 
     #[test]
@@ -285,11 +284,7 @@ mod tests {
         let dir2 = tempdir().expect("Failed to create second temp directory");
         let retriever2 = make_retriever_with_vector_file(dir2.path(), &vector_file);
 
-        assert_eq!(
-            retriever2.vectors.len(),
-            2,
-            "Should have loaded 2 vectors"
-        );
+        assert_eq!(retriever2.vectors.len(), 2, "Should have loaded 2 vectors");
         assert_eq!(
             retriever2.doc_id_to_vector_idx.len(),
             2,
@@ -322,10 +317,7 @@ mod tests {
             results[0].0, 0,
             "Index 0 should be most similar (exact match)"
         );
-        assert_eq!(
-            results[1].0, 2,
-            "Index 2 should be second most similar"
-        );
+        assert_eq!(results[1].0, 2, "Index 2 should be second most similar");
         assert_eq!(
             results[2].0, 1,
             "Index 1 should be least similar (orthogonal)"
@@ -339,9 +331,7 @@ mod tests {
         let mut retriever = make_retriever_with_vector_file(dir.path(), &vector_file);
 
         // Test begin_batch can be called
-        retriever
-            .begin_batch()
-            .expect("Failed to start batch mode");
+        retriever.begin_batch().expect("Failed to start batch mode");
 
         // Should error when calling begin_batch twice
         let result = retriever.begin_batch();
@@ -435,7 +425,10 @@ mod tests {
         assert_eq!(cache_size, 1, "Cache should contain 1 entry");
 
         let metrics = retriever.get_metrics();
-        assert_eq!(metrics.total_searches, 2, "Should have performed 2 searches");
+        assert_eq!(
+            metrics.total_searches, 2,
+            "Should have performed 2 searches"
+        );
         assert_eq!(metrics.cache_hits, 1, "Should have 1 cache hit");
         assert_eq!(metrics.cache_misses, 1, "Should have 1 cache miss");
         assert!(
@@ -615,9 +608,7 @@ mod tests {
         }
 
         // Fix invalid index
-        retriever
-            .doc_id_to_vector_idx
-            .insert("doc1".to_string(), 0);
+        retriever.doc_id_to_vector_idx.insert("doc1".to_string(), 0);
         retriever
             .health_check()
             .expect("Health check should pass after fixing invalid index");
@@ -630,8 +621,7 @@ mod tests {
         let retriever = make_retriever_with_vector_file(dir.path(), &vector_file);
 
         // Remove the index directory while retriever still holds reference
-        std::fs::remove_dir_all(dir.path())
-            .expect("Failed to remove index directory for test");
+        std::fs::remove_dir_all(dir.path()).expect("Failed to remove index directory for test");
 
         let result = retriever.health_check();
         assert!(

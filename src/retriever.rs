@@ -1,30 +1,28 @@
-use tantivy::{
-    Index, 
-    collector::TopDocs, 
-    query::QueryParser,
-    schema::{Schema, TEXT, STORED, Field, Value},
-    directory::MmapDirectory,
-    TantivyError,
-    query::QueryParserError,
-    directory::error::OpenDirectoryError,
-    IndexWriter,
-};
-use serde::{Serialize, Deserialize};
-use std::fmt;
-use std::collections::{HashMap, HashSet};
-use std::fs::File;
-use std::io::{Write, Read};
-use std::sync::Arc;
-use std::sync::atomic::{AtomicUsize, Ordering};
-use rayon::prelude::*;
-use lru::LruCache;
-use std::num::NonZeroUsize;
-use std::time::{Instant, Duration};
-use std::path::Path;
-use tracing::{info, error, debug};
-use std::fs; 
-use fs2;
 use crate::cache::redis_cache::RedisCache;
+use fs2;
+use lru::LruCache;
+use rayon::prelude::*;
+use serde::{Deserialize, Serialize};
+use std::collections::{HashMap, HashSet};
+use std::fmt;
+use std::fs;
+use std::fs::File;
+use std::io::{Read, Write};
+use std::num::NonZeroUsize;
+use std::path::Path;
+use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::Arc;
+use std::time::{Duration, Instant};
+use tantivy::{
+    collector::TopDocs,
+    directory::error::OpenDirectoryError,
+    directory::MmapDirectory,
+    query::QueryParser,
+    query::QueryParserError,
+    schema::{Field, Schema, Value, STORED, TEXT},
+    Index, IndexWriter, TantivyError,
+};
+use tracing::{debug, error, info};
 
 /// Custom error type for Retriever operations
 #[derive(Debug, Serialize, Deserialize)]
@@ -221,9 +219,10 @@ pub async fn reindex_atomic(
 
     let vectors_path = pm.vector_store_path();
     // Ensure parent directory exists for vectors files
-    if let Some(parent) = vectors_path.parent() { 
-        std::fs::create_dir_all(parent)
-            .map_err(|e| RetrieverError::IoError(format!("create_dir_all vector parent failed: {}", e)))?;
+    if let Some(parent) = vectors_path.parent() {
+        std::fs::create_dir_all(parent).map_err(|e| {
+            RetrieverError::IoError(format!("create_dir_all vector parent failed: {}", e))
+        })?;
     }
     let vectors_tmp = vectors_path.with_file_name("vectors.new.json");
 
@@ -244,7 +243,10 @@ pub async fn reindex_atomic(
     if let Err(e) = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
         crate::index::index_all_documents(&mut tmp_ret, upload_dir)
     })) {
-        return Err(RetrieverError::IndexError(format!("index_all_documents panicked: {:?}", e)));
+        return Err(RetrieverError::IndexError(format!(
+            "index_all_documents panicked: {:?}",
+            e
+        )));
     }
     // If not panicked, call again to get Result and handle error
     crate::index::index_all_documents(&mut tmp_ret, upload_dir)
@@ -260,13 +262,18 @@ pub async fn reindex_atomic(
             vectors: tmp_ret.vectors.clone(),
             doc_id_to_vector_idx: tmp_ret.doc_id_to_vector_idx.clone(),
         };
-        let tmp_json = serde_json::to_string(&tmp_storage)
-            .map_err(|e| RetrieverError::SerializationError(format!("serialize temp vectors failed: {}", e)))?;
-        std::fs::write(&vectors_tmp, tmp_json)
-            .map_err(|e| RetrieverError::IoError(format!("write vectors.new.json failed: {}", e)))?;
+        let tmp_json = serde_json::to_string(&tmp_storage).map_err(|e| {
+            RetrieverError::SerializationError(format!("serialize temp vectors failed: {}", e))
+        })?;
+        std::fs::write(&vectors_tmp, tmp_json).map_err(|e| {
+            RetrieverError::IoError(format!("write vectors.new.json failed: {}", e))
+        })?;
     }
     if !vectors_tmp.exists() {
-        return Err(RetrieverError::IoError(format!("temp vectors file not created: {:?}", vectors_tmp)));
+        return Err(RetrieverError::IoError(format!(
+            "temp vectors file not created: {:?}",
+            vectors_tmp
+        )));
     }
     info!("Reindex: temp vectors saved at {:?}", vectors_tmp);
 
@@ -280,13 +287,19 @@ pub async fn reindex_atomic(
         vectors: Vec<Vec<f32>>,
         doc_id_to_vector_idx: std::collections::HashMap<String, usize>,
     }
-    let tmp: TmpStorage = serde_json::from_str(&raw)
-        .map_err(|e| RetrieverError::SerializationError(format!("parse vectors.new.json failed: {}", e)))?;
-    info!("Reindex: pre-swap validation OK: vectors={}, mappings={}", tmp.vectors.len(), tmp.doc_id_to_vector_idx.len());
+    let tmp: TmpStorage = serde_json::from_str(&raw).map_err(|e| {
+        RetrieverError::SerializationError(format!("parse vectors.new.json failed: {}", e))
+    })?;
+    info!(
+        "Reindex: pre-swap validation OK: vectors={}, mappings={}",
+        tmp.vectors.len(),
+        tmp.doc_id_to_vector_idx.len()
+    );
     if tmp.vectors.len() != tmp.doc_id_to_vector_idx.len() {
         return Err(RetrieverError::VectorError(format!(
             "Pre-swap validation failed: {} vectors but {} mappings",
-            tmp.vectors.len(), tmp.doc_id_to_vector_idx.len()
+            tmp.vectors.len(),
+            tmp.doc_id_to_vector_idx.len()
         )));
     }
 
@@ -302,9 +315,15 @@ pub async fn reindex_atomic(
     let manifest_dir = pm.data_dir();
     let manifest_path = manifest_dir.join("manifest.json");
     let manifest_next_path = manifest_dir.join("manifest.next.json");
-    info!("Reindex: writing manifest.next.json -> {:?}", manifest_next_path);
-    std::fs::write(&manifest_next_path, serde_json::to_string_pretty(&manifest_next).unwrap())
-        .map_err(|e| RetrieverError::IoError(format!("write manifest.next.json failed: {}", e)))?;
+    info!(
+        "Reindex: writing manifest.next.json -> {:?}",
+        manifest_next_path
+    );
+    std::fs::write(
+        &manifest_next_path,
+        serde_json::to_string_pretty(&manifest_next).unwrap(),
+    )
+    .map_err(|e| RetrieverError::IoError(format!("write manifest.next.json failed: {}", e)))?;
     debug!("Reindex: manifest.next.json written");
 
     let vectors_count = tmp.vectors.len();
@@ -315,58 +334,90 @@ pub async fn reindex_atomic(
 
     let index_bak = pm.index_dir().join(format!("tantivy.bak-{}", ts));
     if live_index_dir.exists() {
-        info!("Reindex: renaming live index -> backup: {:?} -> {:?}", live_index_dir, index_bak);
+        info!(
+            "Reindex: renaming live index -> backup: {:?} -> {:?}",
+            live_index_dir, index_bak
+        );
         std::fs::rename(&live_index_dir, &index_bak)
             .map_err(|e| RetrieverError::IoError(format!("index backup rename failed: {}", e)))?;
     } else {
-        debug!("Reindex: live index dir does not exist (first run?): {:?}", live_index_dir);
+        debug!(
+            "Reindex: live index dir does not exist (first run?): {:?}",
+            live_index_dir
+        );
     }
-    info!("Reindex: renaming tmp index -> live: {:?} -> {:?}", tmp_index_dir, live_index_dir);
+    info!(
+        "Reindex: renaming tmp index -> live: {:?} -> {:?}",
+        tmp_index_dir, live_index_dir
+    );
     std::fs::rename(&tmp_index_dir, &live_index_dir)
         .map_err(|e| RetrieverError::IoError(format!("tmp->live index rename failed: {}", e)))?;
 
     let vectors_bak = vectors_path.with_file_name(format!("vectors.json.bak-{}", ts));
     if vectors_path.exists() {
-        info!("Reindex: renaming live vectors -> backup: {:?} -> {:?}", vectors_path, vectors_bak);
+        info!(
+            "Reindex: renaming live vectors -> backup: {:?} -> {:?}",
+            vectors_path, vectors_bak
+        );
         std::fs::rename(&vectors_path, &vectors_bak)
             .map_err(|e| RetrieverError::IoError(format!("vectors backup rename failed: {}", e)))?;
     } else {
-        debug!("Reindex: live vectors file does not exist (first run?): {:?}", vectors_path);
+        debug!(
+            "Reindex: live vectors file does not exist (first run?): {:?}",
+            vectors_path
+        );
     }
-    info!("Reindex: renaming tmp vectors -> live: {:?} -> {:?}", vectors_tmp, vectors_path);
+    info!(
+        "Reindex: renaming tmp vectors -> live: {:?} -> {:?}",
+        vectors_tmp, vectors_path
+    );
     std::fs::rename(&vectors_tmp, &vectors_path)
         .map_err(|e| RetrieverError::IoError(format!("tmp->live vectors rename failed: {}", e)))?;
 
     // Swap manifest.next.json -> manifest.json
     if manifest_path.exists() {
         let manifest_bak = manifest_dir.join(format!("manifest.json.bak-{}", ts));
-        info!("Reindex: renaming manifest -> backup: {:?} -> {:?}", manifest_path, manifest_bak);
-        std::fs::rename(&manifest_path, &manifest_bak)
-            .map_err(|e| RetrieverError::IoError(format!("manifest backup rename failed: {}", e)))?;
+        info!(
+            "Reindex: renaming manifest -> backup: {:?} -> {:?}",
+            manifest_path, manifest_bak
+        );
+        std::fs::rename(&manifest_path, &manifest_bak).map_err(|e| {
+            RetrieverError::IoError(format!("manifest backup rename failed: {}", e))
+        })?;
     } else {
-        debug!("Reindex: manifest not present yet (first run?) at {:?}", manifest_path);
+        debug!(
+            "Reindex: manifest not present yet (first run?) at {:?}",
+            manifest_path
+        );
     }
-    info!("Reindex: renaming manifest.next -> manifest: {:?} -> {:?}", manifest_next_path, manifest_path);
-    std::fs::rename(&manifest_next_path, &manifest_path)
-        .map_err(|e| RetrieverError::IoError(format!("manifest next->live rename failed: {}", e)))?;
+    info!(
+        "Reindex: renaming manifest.next -> manifest: {:?} -> {:?}",
+        manifest_next_path, manifest_path
+    );
+    std::fs::rename(&manifest_next_path, &manifest_path).map_err(|e| {
+        RetrieverError::IoError(format!("manifest next->live rename failed: {}", e))
+    })?;
 
     Ok((vectors_count, mappings_count))
 }
 
 impl Retriever {
     /// Create a new Retriever with custom vector storage path
-    pub fn new_with_vector_file(index_dir: &str, vector_file_path: &str) -> Result<Self, RetrieverError> {
+    pub fn new_with_vector_file(
+        index_dir: &str,
+        vector_file_path: &str,
+    ) -> Result<Self, RetrieverError> {
         let mut schema_builder = Schema::builder();
         let title_field = schema_builder.add_text_field("title", TEXT | STORED);
         let content_field = schema_builder.add_text_field("content", TEXT | STORED);
-        let doc_id_field = schema_builder.add_text_field("doc_id", TEXT | STORED); 
+        let doc_id_field = schema_builder.add_text_field("doc_id", TEXT | STORED);
         let schema = schema_builder.build();
         fs::create_dir_all(index_dir)?;
         let dir = MmapDirectory::open(index_dir)?;
         let index = Index::open_or_create(dir, schema)?;
-        
+
         let vector_file_path_owned = vector_file_path.to_string();
-        
+
         let mut retriever = Retriever {
             vectors: Vec::new(),
             index,
@@ -392,31 +443,37 @@ impl Retriever {
             },
             index_dir_path: index_dir.to_string(),
         };
-        
+
         // Now load from the CORRECT path - clone the path to avoid borrow issues
         if let Err(e) = retriever.load_vectors(&vector_file_path_owned) {
-            info!("No existing vectors found at '{}', starting fresh: {}", vector_file_path_owned, e);
+            info!(
+                "No existing vectors found at '{}', starting fresh: {}",
+                vector_file_path_owned, e
+            );
         } else {
             info!("Loaded existing vectors from {}", vector_file_path_owned);
             retriever.metrics.total_vectors = retriever.vectors.len();
         }
-        
+
         if let Ok(reader) = retriever.index.reader() {
             retriever.metrics.total_documents_indexed = reader.searcher().num_docs() as usize;
         }
-        
+
         Ok(retriever)
     }
-// LOCATION: ag/src/retriever.rs
-// INSERT THIS AFTER LINE 221 (after the new_with_vector_file method ends)
+    // LOCATION: ag/src/retriever.rs
+    // INSERT THIS AFTER LINE 221 (after the new_with_vector_file method ends)
 
     /// NEW for v13.1.2: Create with PathBuf paths (wrapper for new_with_vector_file)
-    
-    pub fn new_with_paths(index_dir: std::path::PathBuf, vector_file: std::path::PathBuf) -> Result<Self, RetrieverError> {
-    let index_dir_str = index_dir.to_string_lossy().to_string();
-    let vector_file_str = vector_file.to_string_lossy().to_string();
-    Self::new_with_vector_file(&index_dir_str, &vector_file_str)
-}
+
+    pub fn new_with_paths(
+        index_dir: std::path::PathBuf,
+        vector_file: std::path::PathBuf,
+    ) -> Result<Self, RetrieverError> {
+        let index_dir_str = index_dir.to_string_lossy().to_string();
+        let vector_file_str = vector_file.to_string_lossy().to_string();
+        Self::new_with_vector_file(&index_dir_str, &vector_file_str)
+    }
 
     /// Create a new Retriever with default vector storage path ("./vectors.json")
     pub fn new(index_dir: &str) -> Result<Self, RetrieverError> {
@@ -433,21 +490,20 @@ impl Retriever {
         let dummy_dir = format!("./dummy_tantivy_index_{}", timestamp);
         let dummy_vector_file = format!("./dummy_vectors_{}.json", timestamp);
         let result = Self::new_with_vector_file(&dummy_dir, &dummy_vector_file);
-        
+
         // Clean up the dummy files immediately if creation failed
         if result.is_err() {
             let _ = fs::remove_dir_all(&dummy_dir);
             let _ = fs::remove_file(&dummy_vector_file);
         }
-        
+
         result
     }
 
     /// Repair vector mappings by adding default IDs for unmapped vectors
     pub fn repair_vector_mappings(&mut self) -> usize {
-        let mapped_indices: HashSet<usize> = 
-            self.doc_id_to_vector_idx.values().cloned().collect();
-        
+        let mapped_indices: HashSet<usize> = self.doc_id_to_vector_idx.values().cloned().collect();
+
         let mut repaired = 0;
         for idx in 0..self.vectors.len() {
             if !mapped_indices.contains(&idx) {
@@ -456,14 +512,14 @@ impl Retriever {
                 repaired += 1;
             }
         }
-        
+
         if repaired > 0 {
             debug!("Repaired {} unmapped vectors", repaired);
             if let Err(e) = self.save_vectors(&self.vector_file_path.clone()) {
                 error!("Failed to save repaired mappings: {}", e);
             }
         }
-        
+
         repaired
     }
 
@@ -472,7 +528,10 @@ impl Retriever {
         if !enabled {
             self.search_cache.clear();
         }
-        debug!("Search cache {}", if enabled { "enabled" } else { "disabled" });
+        debug!(
+            "Search cache {}",
+            if enabled { "enabled" } else { "disabled" }
+        );
     }
 
     pub fn clear_cache(&mut self) {
@@ -497,7 +556,9 @@ impl Retriever {
 
     pub fn begin_batch(&mut self) -> Result<(), RetrieverError> {
         if self.index_writer.is_some() {
-            return Err(RetrieverError::IndexError("Batch already in progress".to_string()));
+            return Err(RetrieverError::IndexError(
+                "Batch already in progress".to_string(),
+            ));
         }
         self.index_writer = Some(self.index.writer(256_000_000)?);
         self.batch_mode = true;
@@ -516,44 +577,56 @@ impl Retriever {
             debug!("Batch indexing mode ended, changes committed");
             Ok(())
         } else {
-            Err(RetrieverError::IndexError("No batch in progress".to_string()))
+            Err(RetrieverError::IndexError(
+                "No batch in progress".to_string(),
+            ))
         }
     }
 
-    
-
-    pub fn add_documents_batch(&mut self, documents: Vec<(String, String, String)>) -> Result<usize, RetrieverError> {
-    let was_batch = self.batch_mode;
-    if !was_batch {
-        self.begin_batch()?;
-    }
-    let mut count = 0;
-    for (doc_id, title, content) in documents {  // ← unpack all 3 values
-        if let Err(e) = self.add_document_to_batch(&doc_id, &title, &content) {  // ← pass all 3 to add_document_to_batch
-            error!("Failed to add document '{}': {}", doc_id, e);
-        } else {
-            count += 1;
+    pub fn add_documents_batch(
+        &mut self,
+        documents: Vec<(String, String, String)>,
+    ) -> Result<usize, RetrieverError> {
+        let was_batch = self.batch_mode;
+        if !was_batch {
+            self.begin_batch()?;
         }
+        let mut count = 0;
+        for (doc_id, title, content) in documents {
+            // ← unpack all 3 values
+            if let Err(e) = self.add_document_to_batch(&doc_id, &title, &content) {
+                // ← pass all 3 to add_document_to_batch
+                error!("Failed to add document '{}': {}", doc_id, e);
+            } else {
+                count += 1;
+            }
+        }
+        if !was_batch {
+            self.end_batch()?;
+        }
+        Ok(count)
     }
-    if !was_batch {
-        self.end_batch()?;
-    }
-    Ok(count)
-}
 
-    fn add_document_to_batch(&mut self, doc_id: &str, title: &str, content: &str) -> Result<(), RetrieverError> {
+    fn add_document_to_batch(
+        &mut self,
+        doc_id: &str,
+        title: &str,
+        content: &str,
+    ) -> Result<(), RetrieverError> {
         if !self.batch_mode {
             return Err(RetrieverError::IndexError("Not in batch mode".to_string()));
         }
         let mut doc = tantivy::TantivyDocument::default();
-        doc.add_text(self.doc_id_field, doc_id); 
+        doc.add_text(self.doc_id_field, doc_id);
         doc.add_text(self.title_field, title);
         doc.add_text(self.content_field, content);
         if let Some(writer) = &mut self.index_writer {
             writer.add_document(doc)?;
             Ok(())
         } else {
-            Err(RetrieverError::IndexError("No writer available".to_string()))
+            Err(RetrieverError::IndexError(
+                "No writer available".to_string(),
+            ))
         }
     }
 
@@ -566,8 +639,8 @@ impl Retriever {
                 self.metrics.total_searches += 1;
                 let latency_us = start_time.elapsed().as_micros();
                 self.metrics.total_search_latency_us += latency_us;
-                self.metrics.avg_search_latency_us = 
-                    self.metrics.total_search_latency_us as f64 / self.metrics.total_searches as f64;
+                self.metrics.avg_search_latency_us = self.metrics.total_search_latency_us as f64
+                    / self.metrics.total_searches as f64;
                 if latency_us > self.metrics.max_search_latency_us {
                     self.metrics.max_search_latency_us = latency_us;
                 }
@@ -583,7 +656,8 @@ impl Retriever {
         self.metrics.total_searches += 1;
         let reader = self.index.reader()?;
         let searcher = reader.searcher();
-        let parser = QueryParser::for_index(&self.index, vec![self.title_field, self.content_field]);
+        let parser =
+            QueryParser::for_index(&self.index, vec![self.title_field, self.content_field]);
         let query = parser.parse_query(query_str)?;
         let top_docs = searcher.search(&query, &TopDocs::with_limit(10))?;
         let mut results = Vec::new();
@@ -597,13 +671,14 @@ impl Retriever {
             results.push(content);
         }
         if self.cache_enabled {
-            self.search_cache.put(query_str.to_string(), results.clone());
+            self.search_cache
+                .put(query_str.to_string(), results.clone());
         }
         let latency_us = start_time.elapsed().as_micros();
         self.metrics.total_search_latency_us += latency_us;
         // Observe latency in ms for Prometheus
         crate::monitoring::metrics::observe_search_latency_ms((latency_us as f64) / 1000.0);
-        self.metrics.avg_search_latency_us = 
+        self.metrics.avg_search_latency_us =
             self.metrics.total_search_latency_us as f64 / self.metrics.total_searches as f64;
         if latency_us > self.metrics.max_search_latency_us {
             self.metrics.max_search_latency_us = latency_us;
@@ -661,13 +736,15 @@ impl Retriever {
                 .map(|(idx, vec)| (idx, cosine_similarity(query_vector, vec)))
                 .collect()
         };
-        similarities.sort_by(|a, b| {
-            b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal)
-        });
+        similarities.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
         similarities.into_iter().take(top_k).collect()
     }
 
-    pub fn hybrid_search(&mut self, query: &str, query_vector: Option<&[f32]>) -> Result<Vec<String>, RetrieverError> {
+    pub fn hybrid_search(
+        &mut self,
+        query: &str,
+        query_vector: Option<&[f32]>,
+    ) -> Result<Vec<String>, RetrieverError> {
         let keyword_results = self.search(query)?;
         let query_vec = match query_vector {
             Some(v) => v,
@@ -681,14 +758,19 @@ impl Retriever {
             *score_map.entry(content.clone()).or_insert(0.0) += score;
         }
         for (rank, (idx, _similarity)) in vector_results.iter().enumerate() {
-            if let Some(content) = self.get_content_by_vector_idx(*idx) { // ← Fixed: dereference idx
+            if let Some(content) = self.get_content_by_vector_idx(*idx) {
+                // ← Fixed: dereference idx
                 let score = 1.0 / (k + (rank as f32) + 1.0);
                 *score_map.entry(content).or_insert(0.0) += score;
             }
         }
         let mut merged_results: Vec<(String, f32)> = score_map.into_iter().collect();
         merged_results.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap());
-        Ok(merged_results.into_iter().take(10).map(|(content, _)| content).collect())
+        Ok(merged_results
+            .into_iter()
+            .take(10)
+            .map(|(content, _)| content)
+            .collect())
     }
 
     pub fn get_content_by_vector_idx(&self, idx: usize) -> Option<String> {
@@ -706,7 +788,11 @@ impl Retriever {
         results
     }
 
-    pub fn rerank_by_vector_similarity(&self, query_vector: &[f32], candidate_indices: &[usize]) -> Result<Vec<(usize, f32)>, RetrieverError> {
+    pub fn rerank_by_vector_similarity(
+        &self,
+        query_vector: &[f32],
+        candidate_indices: &[usize],
+    ) -> Result<Vec<(usize, f32)>, RetrieverError> {
         let mut scored_candidates: Vec<(usize, f32)> = candidate_indices
             .iter()
             .filter_map(|&idx| {
@@ -718,7 +804,9 @@ impl Retriever {
             })
             .collect();
         if scored_candidates.is_empty() && !candidate_indices.is_empty() {
-            return Err(RetrieverError::VectorError("No valid candidate indices found".to_string()));
+            return Err(RetrieverError::VectorError(
+                "No valid candidate indices found".to_string(),
+            ));
         }
         scored_candidates.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap());
         Ok(scored_candidates)
@@ -737,7 +825,12 @@ impl Retriever {
         Ok(())
     }
 
-    pub fn add_document(&mut self, doc_id: &str, title: &str, content: &str) -> Result<(), RetrieverError> {
+    pub fn add_document(
+        &mut self,
+        doc_id: &str,
+        title: &str,
+        content: &str,
+    ) -> Result<(), RetrieverError> {
         if self.batch_mode {
             return self.add_document_to_batch(doc_id, title, content);
         }
@@ -762,11 +855,8 @@ impl Retriever {
     }
 
     fn parity_repair(&mut self) -> usize {
-        let mapped_indices: std::collections::HashSet<usize> = self
-            .doc_id_to_vector_idx
-            .values()
-            .cloned()
-            .collect();
+        let mapped_indices: std::collections::HashSet<usize> =
+            self.doc_id_to_vector_idx.values().cloned().collect();
         let mut repaired = 0;
         for idx in 0..self.vectors.len() {
             if !mapped_indices.contains(&idx) {
@@ -791,7 +881,10 @@ impl Retriever {
         // Ensure parity before writing
         let repaired = self.parity_repair();
         if repaired > 0 {
-            info!("Parity repair: added {} missing mappings before save", repaired);
+            info!(
+                "Parity repair: added {} missing mappings before save",
+                repaired
+            );
         }
         let storage = VectorStorage {
             vectors: self.vectors.clone(),
@@ -818,7 +911,10 @@ impl Retriever {
             }
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
                 // Fresh start: missing file is acceptable
-                info!("No existing vectors found at '{}', starting fresh: {}", filename, e);
+                info!(
+                    "No existing vectors found at '{}', starting fresh: {}",
+                    filename, e
+                );
                 self.vectors = Vec::new();
                 self.doc_id_to_vector_idx = HashMap::new();
                 self.metrics.total_vectors = 0;
@@ -829,9 +925,11 @@ impl Retriever {
     }
 
     pub fn force_save(&mut self) -> Result<(), RetrieverError> {
-        if crate::api::is_reindex_in_progress() && !self.vector_file_path.ends_with("vectors.new.json") {
+        if crate::api::is_reindex_in_progress()
+            && !self.vector_file_path.ends_with("vectors.new.json")
+        {
             info!("Manual save skipped (live) during reindex");
-            return Ok(())
+            return Ok(());
         }
         info!("Manual save triggered");
         let path = self.vector_file_path.clone();
@@ -845,7 +943,12 @@ impl Retriever {
         info!("Auto-save threshold set to {} documents", threshold);
     }
 
-    pub fn index_chunk(&mut self, chunk_id: &str, chunk_text: &str, vector: &Vec<f32>) -> Result<(), RetrieverError> {
+    pub fn index_chunk(
+        &mut self,
+        chunk_id: &str,
+        chunk_text: &str,
+        vector: &Vec<f32>,
+    ) -> Result<(), RetrieverError> {
         self.add_document(chunk_id, chunk_id, chunk_text)?;
         self.add_vector_with_id(chunk_id.to_string(), vector.clone());
         Ok(())
@@ -856,10 +959,10 @@ impl Retriever {
         let available_space = fs2::available_space(path)
             .map_err(|e| RetrieverError::IoError(format!("Failed to get disk space: {}", e)))?;
         if available_space < min_free_bytes {
-            return Err(RetrieverError::IoError(
-                format!("Insufficient disk space: {} bytes available, {} bytes required", 
-                       available_space, min_free_bytes)
-            ));
+            return Err(RetrieverError::IoError(format!(
+                "Insufficient disk space: {} bytes available, {} bytes required",
+                available_space, min_free_bytes
+            )));
         }
         Ok(())
     }
@@ -871,74 +974,90 @@ impl Retriever {
         let expected_dim = self.vectors[0].len();
         for (idx, vector) in self.vectors.iter().enumerate() {
             if vector.len() != expected_dim {
-                return Err(RetrieverError::VectorError(
-                    format!("Vector dimension mismatch at index {}: expected {}, found {}", 
-                           idx, expected_dim, vector.len())
-                ));
+                return Err(RetrieverError::VectorError(format!(
+                    "Vector dimension mismatch at index {}: expected {}, found {}",
+                    idx,
+                    expected_dim,
+                    vector.len()
+                )));
             }
         }
-        debug!("Vector dimension validation passed: {} vectors with dimension {}", 
-              self.vectors.len(), expected_dim);
+        debug!(
+            "Vector dimension validation passed: {} vectors with dimension {}",
+            self.vectors.len(),
+            expected_dim
+        );
         Ok(())
     }
 
     pub fn health_check(&self) -> Result<(), RetrieverError> {
         let index_path = Path::new(&self.index_dir_path);
         if !index_path.exists() {
-            return Err(RetrieverError::DirectoryError(
-                format!("Index directory does not exist: {}", self.index_dir_path)
-            ));
+            return Err(RetrieverError::DirectoryError(format!(
+                "Index directory does not exist: {}",
+                self.index_dir_path
+            )));
         }
         if !index_path.is_dir() {
-            return Err(RetrieverError::DirectoryError(
-                format!("Index path is not a directory: {}", self.index_dir_path)
-            ));
+            return Err(RetrieverError::DirectoryError(format!(
+                "Index path is not a directory: {}",
+                self.index_dir_path
+            )));
         }
 
-        let reader = self.index.reader()
-            .map_err(|e| RetrieverError::IndexError(format!("Failed to create index reader: {}", e)))?;
+        let reader = self.index.reader().map_err(|e| {
+            RetrieverError::IndexError(format!("Failed to create index reader: {}", e))
+        })?;
         let searcher = reader.searcher();
         let doc_count = searcher.num_docs();
 
         if self.vectors.len() != self.doc_id_to_vector_idx.len() {
-            return Err(RetrieverError::VectorError(
-                format!("Vector storage inconsistency: {} vectors but {} document mappings", 
-                       self.vectors.len(), self.doc_id_to_vector_idx.len())
-            ));
+            return Err(RetrieverError::VectorError(format!(
+                "Vector storage inconsistency: {} vectors but {} document mappings",
+                self.vectors.len(),
+                self.doc_id_to_vector_idx.len()
+            )));
         }
 
         for (doc_id, &vec_idx) in &self.doc_id_to_vector_idx {
             if vec_idx >= self.vectors.len() {
-                return Err(RetrieverError::VectorError(
-                    format!("Invalid vector index {} for document '{}' (vectors length: {})", 
-                           vec_idx, doc_id, self.vectors.len())
-                ));
+                return Err(RetrieverError::VectorError(format!(
+                    "Invalid vector index {} for document '{}' (vectors length: {})",
+                    vec_idx,
+                    doc_id,
+                    self.vectors.len()
+                )));
             }
         }
 
         self.validate_vector_dimensions()?;
 
         if doc_count > 0 {
-            let parser = QueryParser::for_index(&self.index, vec![self.title_field, self.content_field]);
+            let parser =
+                QueryParser::for_index(&self.index, vec![self.title_field, self.content_field]);
             match parser.parse_query("*") {
                 Ok(query) => {
                     if let Err(e) = searcher.search(&query, &TopDocs::with_limit(1)) {
-                        return Err(RetrieverError::IndexError(
-                            format!("Basic search test failed: {}", e)
-                        ));
+                        return Err(RetrieverError::IndexError(format!(
+                            "Basic search test failed: {}",
+                            e
+                        )));
                     }
                 }
                 Err(_e) => {
-                    let fallback_query = parser.parse_query("a").unwrap_or_else(|_| parser.parse_query("*").unwrap());
+                    let fallback_query = parser
+                        .parse_query("a")
+                        .unwrap_or_else(|_| parser.parse_query("*").unwrap());
                     let first_doc_addr = searcher
                         .search(&fallback_query, &TopDocs::with_limit(1))
                         .map(|top_docs| top_docs.first().map(|(_, addr)| *addr))
                         .unwrap_or(None);
                     if let Some(addr) = first_doc_addr {
                         if let Err(e) = searcher.doc::<tantivy::TantivyDocument>(addr) {
-                            return Err(RetrieverError::IndexError(
-                                format!("Failed to retrieve document: {}", e)
-                            ));
+                            return Err(RetrieverError::IndexError(format!(
+                                "Failed to retrieve document: {}",
+                                e
+                            )));
                         }
                     }
                 }
@@ -951,24 +1070,30 @@ impl Retriever {
         }
 
         if Path::new(&self.vector_file_path).exists() {
-            if let Err(e) = std::fs::OpenOptions::new().write(true).open(&self.vector_file_path) {
-                return Err(RetrieverError::IoError(
-                    format!("Vector file exists but is not writable: {}", e)
-                ));
+            if let Err(e) = std::fs::OpenOptions::new()
+                .write(true)
+                .open(&self.vector_file_path)
+            {
+                return Err(RetrieverError::IoError(format!(
+                    "Vector file exists but is not writable: {}",
+                    e
+                )));
             }
         } else {
             if let Some(parent) = Path::new(&self.vector_file_path).parent() {
                 if !parent.exists() {
-                    return Err(RetrieverError::IoError(
-                        format!("Vector file parent directory does not exist: {:?}", parent)
-                    ));
+                    return Err(RetrieverError::IoError(format!(
+                        "Vector file parent directory does not exist: {:?}",
+                        parent
+                    )));
                 }
                 let temp_file = parent.join(".health_check_test");
                 if let Err(e) = std::fs::File::create(&temp_file) {
                     let _ = std::fs::remove_file(&temp_file);
-                    return Err(RetrieverError::IoError(
-                        format!("Cannot write to vector file directory: {}", e)
-                    ));
+                    return Err(RetrieverError::IoError(format!(
+                        "Cannot write to vector file directory: {}",
+                        e
+                    )));
                 }
                 let _ = std::fs::remove_file(&temp_file);
             }
@@ -976,13 +1101,18 @@ impl Retriever {
 
         self.check_disk_space(100 * 1024 * 1024)?;
 
-        info!("Health: OK - {} documents, {} vectors", doc_count, self.vectors.len());
+        info!(
+            "Health: OK - {} documents, {} vectors",
+            doc_count,
+            self.vectors.len()
+        );
         Ok(())
     }
 
     pub fn ready_check(&self) -> Result<(), RetrieverError> {
-        let reader = self.index.reader()
-            .map_err(|e| RetrieverError::IndexError(format!("Failed to create index reader: {}", e)))?;
+        let reader = self.index.reader().map_err(|e| {
+            RetrieverError::IndexError(format!("Failed to create index reader: {}", e))
+        })?;
         let _searcher = reader.searcher();
         let _ = self.vectors.len();
         let _ = self.doc_id_to_vector_idx.len();
@@ -992,6 +1122,14 @@ impl Retriever {
 
 // Phase 11 Step 2: L2 Cache Methods - Version 1.0.0
 impl Retriever {
+    pub fn l1_cache_enabled(&self) -> bool {
+        self.cache_enabled
+    }
+
+    pub fn l2_cache_enabled(&self) -> bool {
+        self.l2_cache.is_some()
+    }
+
     /// Get current L2 cache statistics
     pub fn get_l2_cache_stats(&self) -> crate::cache::cache_layer::CacheStats {
         self.l2_cache_stats.clone()
@@ -1027,6 +1165,18 @@ impl Retriever {
             }
         } else {
             "L3 Redis cache: NOT INITIALIZED".to_string()
+        }
+    }
+
+    pub fn get_l3_cache_summary(&self) -> crate::cache::redis_cache::RedisCacheSummary {
+        if let Some(cache) = &self.l3_cache {
+            cache.summary()
+        } else {
+            crate::cache::redis_cache::RedisCacheSummary {
+                enabled: false,
+                connected: false,
+                ttl_seconds: 0,
+            }
         }
     }
 

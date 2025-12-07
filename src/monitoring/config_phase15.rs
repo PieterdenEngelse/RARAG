@@ -9,7 +9,7 @@
 use crate::monitoring::HistogramBuckets;
 
 /// Production monitoring configuration for Phase 15 Step 4
-/// 
+///
 /// Combines histogram bucket configuration
 /// into a single, easy-to-use configuration object
 #[derive(Debug, Clone)]
@@ -20,12 +20,12 @@ pub struct MonitoringConfigPhase15 {
 
 impl MonitoringConfigPhase15 {
     /// Load histogram configuration from environment
-    /// 
+    ///
     /// Loads histogram bucket configuration from environment variables.
-    /// 
+    ///
     /// # Returns
     /// Fully initialized monitoring configuration
-    /// 
+    ///
     /// # Example
     /// ```ignore
     /// let config = MonitoringConfigPhase15::from_env();
@@ -40,17 +40,15 @@ impl MonitoringConfigPhase15 {
             "Monitoring Phase 15 configuration loaded"
         );
 
-        Self {
-            histogram_config,
-        }
+        Self { histogram_config }
     }
 
     /// Create a configuration for production environment
-    /// 
+    ///
     /// Presets:
     /// - Search buckets: [50, 100, 500, 1000, 5000] ms
     /// - Reindex buckets: [1000, 5000, 30000, 60000] ms
-    /// 
+    ///
     /// These values are appropriate for high-volume production deployments
     pub fn production() -> Self {
         Self {
@@ -62,18 +60,22 @@ impl MonitoringConfigPhase15 {
     }
 
     /// Get summary of configuration for logging
-    /// 
+    ///
     /// # Returns
     /// String suitable for debug/info logging that shows all settings
     pub fn summary(&self) -> String {
         format!(
             "MonitoringConfig(buckets=[search:{}ms, reindex:{}ms])",
-            self.histogram_config.search_buckets.iter()
+            self.histogram_config
+                .search_buckets
+                .iter()
                 .copied()
                 .map(|b| format!("{}", b as i32))
                 .collect::<Vec<_>>()
                 .join(","),
-            self.histogram_config.reindex_buckets.iter()
+            self.histogram_config
+                .reindex_buckets
+                .iter()
                 .copied()
                 .map(|b| format!("{}", b as i32))
                 .collect::<Vec<_>>()

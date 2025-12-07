@@ -1,5 +1,5 @@
 //! Health check endpoints
-//! 
+//!
 //! Provides:
 //! - GET /monitoring/health - Full health status
 //! - GET /monitoring/ready - Readiness probe (K8s compatible)
@@ -11,7 +11,6 @@
 
 use serde::{Deserialize, Serialize};
 use std::sync::atomic::{AtomicBool, Ordering};
-
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub enum ComponentStatus {
@@ -79,9 +78,9 @@ impl HealthTracker {
             startup_time: std::time::Instant::now(),
         }
     }
-    
+
     /// Mark system as ready
-    /// 
+    ///
     /// INSTALLER IMPACT:
     /// - Call after all components initialized
     /// - /ready endpoint will return 200 after this
@@ -89,19 +88,19 @@ impl HealthTracker {
         self.is_ready.store(true, Ordering::SeqCst);
         tracing::info!("System marked as ready");
     }
-    
+
     /// Mark system as not ready
     pub fn mark_not_ready(&self) {
         self.is_ready.store(false, Ordering::SeqCst);
         tracing::warn!("System marked as not ready");
     }
-    
+
     /// Mark system as not live (will restart if running in container)
     pub fn mark_not_live(&self) {
         self.is_live.store(false, Ordering::SeqCst);
         tracing::error!("System marked as not live");
     }
-    
+
     /// Update component status
     pub fn set_component_status(&self, component: &str, status: ComponentStatus) {
         let mut components = self.components.write();
@@ -114,11 +113,11 @@ impl HealthTracker {
         }
         tracing::debug!(component, status = %status, "Component status updated");
     }
-    
+
     /// Get current health status
     pub fn get_status(&self) -> HealthStatus {
         let components = self.components.read().clone();
-        
+
         // Overall status is worst component status
         let overall_status = match components {
             _ if components.api == ComponentStatus::Unhealthy
@@ -135,9 +134,9 @@ impl HealthTracker {
             }
             _ => ComponentStatus::Healthy,
         };
-        
+
         let uptime = self.startup_time.elapsed().as_secs_f64();
-        
+
         HealthStatus {
             status: overall_status,
             timestamp: chrono::Utc::now().to_rfc3339(),
@@ -146,12 +145,12 @@ impl HealthTracker {
             message: None,
         }
     }
-    
+
     /// Check if system is ready
     pub fn is_ready(&self) -> bool {
         self.is_ready.load(Ordering::SeqCst)
     }
-    
+
     /// Check if system is live
     pub fn is_live(&self) -> bool {
         self.is_live.load(Ordering::SeqCst)
@@ -167,48 +166,48 @@ impl Default for HealthTracker {
 #[cfg(test)]
 mod tests {
     use super::*;
-    
+
     #[test]
     fn test_health_tracker_creation() {
         let tracker = HealthTracker::new();
         assert!(!tracker.is_ready());
         assert!(tracker.is_live());
     }
-    
+
     #[test]
     fn test_mark_ready() {
         let tracker = HealthTracker::new();
         tracker.mark_ready();
         assert!(tracker.is_ready());
     }
-    
+
     #[test]
     fn test_component_status_update() {
         let tracker = HealthTracker::new();
         tracker.set_component_status("api", ComponentStatus::Healthy);
         tracker.set_component_status("database", ComponentStatus::Degraded);
-        
+
         let status = tracker.get_status();
         assert_eq!(status.components.api, ComponentStatus::Healthy);
         assert_eq!(status.components.database, ComponentStatus::Degraded);
     }
-    
+
     #[test]
     fn test_overall_health_calculation() {
         let tracker = HealthTracker::new();
-        
+
         // All healthy
         tracker.set_component_status("api", ComponentStatus::Healthy);
         tracker.set_component_status("database", ComponentStatus::Healthy);
         tracker.set_component_status("configuration", ComponentStatus::Healthy);
         tracker.set_component_status("logging", ComponentStatus::Healthy);
-        
+
         assert_eq!(tracker.get_status().status, ComponentStatus::Healthy);
-        
+
         // One degraded
         tracker.set_component_status("database", ComponentStatus::Degraded);
         assert_eq!(tracker.get_status().status, ComponentStatus::Degraded);
-        
+
         // One unhealthy
         tracker.set_component_status("api", ComponentStatus::Unhealthy);
         assert_eq!(tracker.get_status().status, ComponentStatus::Unhealthy);

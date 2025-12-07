@@ -2,11 +2,11 @@
 // Phase 10: Execute individual tools in a chain
 // Handles actual tool execution with result passing
 
-use serde::{Deserialize, Serialize};
-use crate::tools::{Tool, ToolType, ToolResult};
 use crate::tools::calculator::CalculatorTool;
-use crate::tools::web_search::WebSearchTool;
 use crate::tools::url_fetch::URLFetchTool;
+use crate::tools::web_search::WebSearchTool;
+use crate::tools::{Tool, ToolResult, ToolType};
+use serde::{Deserialize, Serialize};
 use std::time::Instant;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

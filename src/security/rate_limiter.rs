@@ -1,8 +1,9 @@
+use lru::LruCache;
+use serde::Serialize;
 use std::net::IpAddr;
 use std::num::NonZeroUsize;
 use std::sync::Mutex;
-use std::time::{Instant, Duration};
-use lru::LruCache;
+use std::time::{Duration, Instant};
 
 #[derive(Clone, Debug)]
 pub struct RateLimiterConfig {
@@ -24,12 +25,28 @@ pub struct RateLimiter {
     buckets: Mutex<LruCache<String, Bucket>>, // keyed by IP string
 }
 
+#[derive(Debug, Clone, Serialize)]
+pub struct RateLimiterState {
+    pub enabled: bool,
+    pub active_keys: usize,
+    pub capacity: usize,
+}
+
 impl RateLimiter {
     pub fn new(config: RateLimiterConfig) -> Self {
         let cap = NonZeroUsize::new(config.max_ips.max(1)).unwrap();
         Self {
             config,
             buckets: Mutex::new(LruCache::new(cap)),
+        }
+    }
+
+    pub fn snapshot(&self) -> RateLimiterState {
+        let guard = self.buckets.lock().expect("rate limiter mutex poisoned");
+        RateLimiterState {
+            enabled: self.config.enabled,
+            active_keys: guard.len(),
+            capacity: self.config.max_ips,
         }
     }
 
@@ -42,7 +59,11 @@ impl RateLimiter {
         if !self.config.enabled {
             return true;
         }
-        let qps = if qps_override > 0.0 { qps_override } else { self.config.qps };
+        let qps = if qps_override > 0.0 {
+            qps_override
+        } else {
+            self.config.qps
+        };
         let burst = self.config.burst.max(0.0);
         let key = Self::key_for(ip);
         let (allow, _retry) = self.check_key(&key, qps, burst);
@@ -64,9 +85,12 @@ impl RateLimiter {
         // Test-only optional discrete refill mode controlled via env var
         // RATE_LIMIT_DISCRETE_REFILL=true enables discrete refill using interval RATE_LIMIT_REFILL_INTERVAL_MS (default 1000ms)
         let discrete = std::env::var("RATE_LIMIT_DISCRETE_REFILL")
-            .map(|v| v.to_lowercase() == "true" || v == "1").unwrap_or(false);
+            .map(|v| v.to_lowercase() == "true" || v == "1")
+            .unwrap_or(false);
         let interval_ms: u64 = std::env::var("RATE_LIMIT_REFILL_INTERVAL_MS")
-            .ok().and_then(|v| v.parse().ok()).unwrap_or(1000);
+            .ok()
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(1000);
 
         if let Some(bucket) = map.get_mut(key) {
             if qps <= 0.0 {
@@ -108,8 +132,18 @@ impl RateLimiter {
             // New bucket: allow immediately if burst allows at least one token
             let allow = burst >= 1.0;
             let tokens = if allow { (burst - 1.0).max(0.0) } else { 0.0 };
-            map.put(key.to_string(), Bucket { tokens, last_refill: now });
-            if allow { (true, 0) } else { (false, 1) }
+            map.put(
+                key.to_string(),
+                Bucket {
+                    tokens,
+                    last_refill: now,
+                },
+            );
+            if allow {
+                (true, 0)
+            } else {
+                (false, 1)
+            }
         }
     }
 
@@ -127,9 +161,12 @@ impl RateLimiter {
 
         // Mirror discrete refill logic for retry-after calculation
         let discrete = std::env::var("RATE_LIMIT_DISCRETE_REFILL")
-            .map(|v| v.to_lowercase() == "true" || v == "1").unwrap_or(false);
+            .map(|v| v.to_lowercase() == "true" || v == "1")
+            .unwrap_or(false);
         let interval_ms: u64 = std::env::var("RATE_LIMIT_REFILL_INTERVAL_MS")
-            .ok().and_then(|v| v.parse().ok()).unwrap_or(1000);
+            .ok()
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(1000);
 
         if let Some(bucket) = map.get_mut(key) {
             if discrete {

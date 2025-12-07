@@ -7,8 +7,8 @@
 // Enables trace propagation, correlation IDs, and performance analysis
 
 use opentelemetry::trace::TraceError;
-use tracing_opentelemetry::OpenTelemetryLayer;
 use opentelemetry_otlp::WithExportConfig;
+use tracing_opentelemetry::OpenTelemetryLayer;
 
 use std::env;
 use uuid::Uuid;
@@ -84,7 +84,12 @@ impl DistributedTracingConfig {
     ///
     /// # Returns
     /// OpenTelemetry layer for tracing subscriber, or None if disabled
-    pub fn init_tracer(&self) -> Result<Option<OpenTelemetryLayer<tracing_subscriber::Registry, opentelemetry_sdk::trace::Tracer>>, TraceError> {
+    pub fn init_tracer(
+        &self,
+    ) -> Result<
+        Option<OpenTelemetryLayer<tracing_subscriber::Registry, opentelemetry_sdk::trace::Tracer>>,
+        TraceError,
+    > {
         if !self.enabled {
             return Ok(None);
         }
@@ -96,13 +101,14 @@ impl DistributedTracingConfig {
         if mode.eq_ignore_ascii_case("collector") {
             tracing::warn!("JAEGER_MODE=collector set, but collector runtime not configured; falling back to agent pipeline");
         }
-        
+
         // Parse the agent target (host/port) to avoid dead_code warning and for future use
         let (agent_host, agent_port) = self.parse_jaeger_endpoint();
         tracing::debug!(%agent_host, agent_port, "Jaeger agent target parsed");
-        
+
         // Build OTLP exporter (grpc) to env-specified endpoint or default
-        let endpoint = std::env::var("OTEL_EXPORTER_OTLP_ENDPOINT").unwrap_or_else(|_| "http://127.0.0.1:4317".into());
+        let endpoint = std::env::var("OTEL_EXPORTER_OTLP_ENDPOINT")
+            .unwrap_or_else(|_| "http://127.0.0.1:4317".into());
         let exporter = opentelemetry_otlp::new_exporter()
             .tonic()
             .with_endpoint(endpoint);
@@ -125,7 +131,8 @@ impl DistributedTracingConfig {
     /// Parse Jaeger endpoint into host and port
     fn parse_jaeger_endpoint(&self) -> (String, u16) {
         // Expected format: "http://localhost:6831" or "localhost:6831"
-        let url = self.jaeger_endpoint
+        let url = self
+            .jaeger_endpoint
             .trim_start_matches("http://")
             .trim_start_matches("https://");
 

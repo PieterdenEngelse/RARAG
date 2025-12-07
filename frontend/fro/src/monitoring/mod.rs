@@ -1,27 +1,25 @@
 //! Frontend monitoring module for Dioxus
-//! 
+//!
 //! Provides:
 //! - Client-side event logging
 //! - API call tracking and performance metrics
 //! - Error capturing and reporting
 //! - Browser console logging
 
-pub mod logger;
 pub mod analytics;
+pub mod logger;
 
-pub use logger::Logger;
 pub use analytics::Analytics;
+pub use logger::Logger;
 
 /// Initialize frontend monitoring
-/// 
+///
 /// INSTALLER IMPACT:
 /// - Call once at app startup in main.rs
 /// - Sets up console logging and analytics tracking
 pub fn init() {
     Logger::init();
     Analytics::init();
-    
-    
 }
 
 /// Log an event

@@ -1,18 +1,15 @@
-use dioxus::prelude::*;
 use crate::app::Route;
 use crate::components::dark_mode_toggle::DarkModeToggle;
-use crate::components::nav_dropdown::{NavDropdown, DropdownItem};
+use crate::components::nav_dropdown::{DropdownItem, NavDropdown};
+use dioxus::prelude::*;
 
 #[component]
 pub fn Header() -> Element {
     let mut menu_open = use_signal(|| false);
-    
-    let _is_dark = match try_use_context::<Signal<bool>>() {
-        Some(signal) => signal(),
-        None => true,
-    };
 
-    // Use transparent header background so it matches the page background in both light and dark modes.
+    let mut is_dark = try_use_context::<Signal<bool>>().unwrap_or(Signal::new(true));
+    is_dark.set(true);
+
     let header_bg = "bg-transparent";
 
     rsx! {
@@ -30,7 +27,7 @@ pub fn Header() -> Element {
                 nav { class: "hidden md:flex items-center gap-6 text-sm",
                     Link {
                         to: Route::Home {},
-                        class: "hover:text-indigo-600 dark:hover:text-indigo-400 transition-colors",
+                        class: "text-teal-200 hover:text-white transition-colors",
                         "Home"
                     }
                     NavDropdown { title: "About".to_string(),
@@ -58,7 +55,7 @@ pub fn Header() -> Element {
                 div { class: "md:hidden mt-4 pb-4 flex flex-col gap-4",
                     Link {
                         to: Route::Home {},
-                        class: "hover:text-indigo-600 dark:hover:text-indigo-400 transition-colors",
+                        class: "text-teal-200 hover:text-white transition-colors",
                         onclick: move |_| menu_open.set(false),
                         "Home"
                     }

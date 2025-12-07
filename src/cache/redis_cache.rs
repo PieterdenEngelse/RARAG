@@ -2,9 +2,16 @@
 
 use redis::aio::ConnectionManager;
 use redis::AsyncCommands;
+use serde::{Deserialize, Serialize};
 use std::time::Duration;
-use serde::{Serialize, Deserialize};
-use tracing::{info, error};
+use tracing::{error, info};
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RedisCacheSummary {
+    pub enabled: bool,
+    pub connected: bool,
+    pub ttl_seconds: u64,
+}
 
 /// Redis-backed distributed L3 cache
 #[derive(Clone)]
@@ -18,22 +25,20 @@ impl RedisCache {
     /// Create new Redis cache connection
     pub async fn new(redis_url: &str, ttl_secs: u64) -> Result<Self, Box<dyn std::error::Error>> {
         match redis::Client::open(redis_url) {
-            Ok(client) => {
-                match ConnectionManager::new(client).await {
-                    Ok(manager) => {
-                        info!("Redis L3 cache connected (TTL: {} seconds)", ttl_secs);
-                        Ok(Self {
-                            client: Some(manager),
-                            ttl: Duration::from_secs(ttl_secs),
-                            enabled: true,
-                        })
-                    }
-                    Err(e) => {
-                        error!("Failed to create Redis connection manager: {}", e);
-                        Ok(Self::disabled())
-                    }
+            Ok(client) => match ConnectionManager::new(client).await {
+                Ok(manager) => {
+                    info!("Redis L3 cache connected (TTL: {} seconds)", ttl_secs);
+                    Ok(Self {
+                        client: Some(manager),
+                        ttl: Duration::from_secs(ttl_secs),
+                        enabled: true,
+                    })
                 }
-            }
+                Err(e) => {
+                    error!("Failed to create Redis connection manager: {}", e);
+                    Ok(Self::disabled())
+                }
+            },
             Err(e) => {
                 error!("Failed to open Redis client: {}", e);
                 Ok(Self::disabled())
@@ -55,6 +60,14 @@ impl RedisCache {
         self.enabled && self.client.is_some()
     }
 
+    pub fn summary(&self) -> RedisCacheSummary {
+        RedisCacheSummary {
+            enabled: self.enabled,
+            connected: self.client.is_some(),
+            ttl_seconds: self.ttl.as_secs(),
+        }
+    }
+
     /// Get value from Redis
     pub async fn get<T: for<'de> Deserialize<'de>>(
         &self,
@@ -67,7 +80,7 @@ impl RedisCache {
         if let Some(client) = &self.client {
             let mut conn = client.clone();
             let value: Option<String> = conn.get(key).await?;
-            
+
             match value {
                 Some(json) => {
                     let deserialized = serde_json::from_str(&json)?;
@@ -94,7 +107,7 @@ impl RedisCache {
             let mut conn = client.clone();
             let json = serde_json::to_string(value)?;
             let ttl_secs = self.ttl.as_secs();
-            
+
             conn.set_ex::<_, _, ()>(key, json, ttl_secs).await?;
             Ok(())
         } else {
@@ -127,11 +140,11 @@ impl RedisCache {
             let mut conn = client.clone();
             let keys: Vec<String> = conn.keys(pattern).await?;
             let count = keys.len() as u32;
-            
+
             if !keys.is_empty() {
                 conn.del::<_, ()>(keys).await?;
             }
-            
+
             Ok(count)
         } else {
             Ok(0)
@@ -161,7 +174,10 @@ impl RedisCache {
 
         if let Some(client) = &self.client {
             let mut conn = client.clone();
-            let result: String = redis::cmd("INFO").arg("stats").query_async::<String>(&mut conn).await?;
+            let result: String = redis::cmd("INFO")
+                .arg("stats")
+                .query_async::<String>(&mut conn)
+                .await?;
             Ok(result)
         } else {
             Ok("Redis disabled".to_string())
@@ -206,28 +222,34 @@ mod tests {
     #[tokio::test]
     #[ignore]
     async fn test_redis_connection() {
-        let cache = RedisCache::new("redis://127.0.0.1:6379/", 60).await.unwrap();
+        let cache = RedisCache::new("redis://127.0.0.1:6379/", 60)
+            .await
+            .unwrap();
         assert!(cache.is_enabled());
     }
 
     #[tokio::test]
     #[ignore]
     async fn test_redis_set_get() {
-        let cache = RedisCache::new("redis://127.0.0.1:6379/", 60).await.unwrap();
-        
+        let cache = RedisCache::new("redis://127.0.0.1:6379/", 60)
+            .await
+            .unwrap();
+
         let test_value = vec!["result1".to_string(), "result2".to_string()];
         cache.set("test_key", &test_value).await.unwrap();
-        
+
         let retrieved: Vec<String> = cache.get("test_key").await.unwrap().unwrap();
         assert_eq!(retrieved.len(), 2);
-        
+
         cache.delete("test_key").await.unwrap();
     }
 
     #[tokio::test]
     #[ignore]
     async fn test_redis_health_check() {
-        let cache = RedisCache::new("redis://127.0.0.1:6379/", 60).await.unwrap();
+        let cache = RedisCache::new("redis://127.0.0.1:6379/", 60)
+            .await
+            .unwrap();
         let health = cache.health_check().await;
         assert!(health.is_ok());
     }

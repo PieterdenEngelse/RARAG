@@ -1,6 +1,6 @@
 // examples/agent_example.rs
 // End-to-End Agent Example - Phases 1-7 in action
-// 
+//
 // This example demonstrates:
 // Phase 1: Chunking documents
 // Phase 2: Embedding with caching
@@ -9,10 +9,10 @@
 // Phase 6: Agent memory (goals, episodes, reflections)
 // Phase 7: Decision engine (autonomous execution)
 
-use ag::embedder::{EmbeddingService, EmbeddingConfig};
+use ag::embedder::{EmbeddingConfig, EmbeddingService};
 use ag::memory::{
-    VectorStore, RagQueryPipeline, RagConfig,
-    AgentMemoryLayer, DecisionEngine, LLMConfig, create_llm_provider
+    create_llm_provider, AgentMemoryLayer, DecisionEngine, LLMConfig, RagConfig, RagQueryPipeline,
+    VectorStore,
 };
 use std::sync::Arc;
 use tempfile::NamedTempFile;
@@ -29,9 +29,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("✓ Embedding service initialized (with LRU cache)");
 
     // Phase 3: Vector store
-    let vector_store = Arc::new(tokio::sync::RwLock::new(
-        VectorStore::with_defaults()?
-    ));
+    let vector_store = Arc::new(tokio::sync::RwLock::new(VectorStore::with_defaults()?));
     println!("✓ Vector store initialized");
 
     // Phase 5: LLM provider (Phi 3.5 via Ollama)
@@ -70,9 +68,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Set a goal
     println!("1️⃣  Setting goal...");
-    let goal = agent_memory.set_goal(
-        "Learn about Rust programming language".to_string()
-    )?;
+    let goal = agent_memory.set_goal("Learn about Rust programming language".to_string())?;
     println!("   Goal ID: {}", goal.id);
     println!("   Goal: {}\n", goal.goal);
 
@@ -117,7 +113,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         println!("       Success: {}", episode.success);
     }
 
-    println!("\n   Recent reflections: {}", context.recent_reflections.len());
+    println!(
+        "\n   Recent reflections: {}",
+        context.recent_reflections.len()
+    );
     for reflection in &context.recent_reflections {
         println!("     - Type: {}", reflection.reflection_type);
         println!("       Insight: {}", reflection.insight);
@@ -136,7 +135,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         println!("   Found {} similar query(ies):", similar.len());
         for (i, episode) in similar.iter().enumerate() {
             println!("     {}. Query: {}", i + 1, episode.query);
-            println!("        Response: {} (success: {})", 
+            println!(
+                "        Response: {} (success: {})",
                 &episode.response[..episode.response.len().min(50)],
                 episode.success
             );
@@ -173,7 +173,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 #[tokio::main]
 async fn main_simple() -> Result<(), Box<dyn std::error::Error>> {
     // Quick 3-step example:
-    
+
     // 1. Setup agent
     let embedding_service = Arc::new(EmbeddingService::new(EmbeddingConfig::default()));
     let vector_store = Arc::new(tokio::sync::RwLock::new(VectorStore::with_defaults()?));

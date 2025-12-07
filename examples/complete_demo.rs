@@ -1,9 +1,11 @@
 // examples/complete_demo.rs
-use ag::memory::{VectorStore, VectorRecord, RagQueryPipeline, RagQueryRequest, RagConfig, LLMProvider};
-use ag::embedder::{EmbeddingService, EmbeddingConfig};
+use ag::embedder::{EmbeddingConfig, EmbeddingService};
+use ag::memory::{
+    LLMProvider, RagConfig, RagQueryPipeline, RagQueryRequest, VectorRecord, VectorStore,
+};
+use async_trait::async_trait;
 use std::sync::Arc;
 use tokio::sync::RwLock;
-use async_trait::async_trait;
 
 struct DemoLLM;
 
@@ -12,7 +14,9 @@ impl LLMProvider for DemoLLM {
     async fn generate(&self, _prompt: &str) -> Result<String, ag::memory::LLMError> {
         Ok("Demo answer based on context.".to_string())
     }
-    fn model_name(&self) -> &str { "demo" }
+    fn model_name(&self) -> &str {
+        "demo"
+    }
 }
 
 #[tokio::main]

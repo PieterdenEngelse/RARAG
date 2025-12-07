@@ -52,15 +52,15 @@ impl InstallLogger {
                 LogLevel::Warn => "[WARN]",
                 LogLevel::Error => "[ERROR]",
             };
-            
+
             let formatted = format!("{} {} {}", timestamp, level_str, message);
-            
+
             // Console output
             match level {
                 LogLevel::Error => eprintln!("{}", formatted),
                 _ => println!("{}", formatted),
             }
-            
+
             // File output
             if let Some(ref mutex_file) = self.log_file {
                 if let Ok(mut file) = mutex_file.lock() {
@@ -70,10 +70,18 @@ impl InstallLogger {
         }
     }
 
-    pub fn debug(&self, msg: &str) { self.log(LogLevel::Debug, msg); }
-    pub fn info(&self, msg: &str) { self.log(LogLevel::Info, msg); }
-    pub fn warn(&self, msg: &str) { self.log(LogLevel::Warn, msg); }
-    pub fn error(&self, msg: &str) { self.log(LogLevel::Error, msg); }
+    pub fn debug(&self, msg: &str) {
+        self.log(LogLevel::Debug, msg);
+    }
+    pub fn info(&self, msg: &str) {
+        self.log(LogLevel::Info, msg);
+    }
+    pub fn warn(&self, msg: &str) {
+        self.log(LogLevel::Warn, msg);
+    }
+    pub fn error(&self, msg: &str) {
+        self.log(LogLevel::Error, msg);
+    }
 }
 
 impl Default for InstallLogger {

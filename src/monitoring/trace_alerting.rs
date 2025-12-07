@@ -9,14 +9,14 @@
 //
 // Sends alerts via webhook when anomalies are detected.
 
-use std::env;
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
-use serde::{Deserialize, Serialize};
-use serde_json::json;
-use tracing::{info, warn, debug};
+use crate::monitoring::metrics::REGISTRY;
 use once_cell::sync::Lazy;
 use prometheus::{IntCounterVec, Opts};
-use crate::monitoring::metrics::REGISTRY;
+use serde::{Deserialize, Serialize};
+use serde_json::json;
+use std::env;
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use tracing::{debug, info, warn};
 
 /// Configuration for trace-based alerting
 #[derive(Debug, Clone)]
@@ -78,8 +78,8 @@ impl TraceAlertingConfig {
             .parse::<bool>()
             .unwrap_or(false);
 
-        let tempo_url = env::var("TEMPO_URL")
-            .unwrap_or_else(|_| "http://127.0.0.1:3200".to_string());
+        let tempo_url =
+            env::var("TEMPO_URL").unwrap_or_else(|_| "http://127.0.0.1:3200".to_string());
 
         let insecure_tls = env::var("TEMPO_ALERT_INSECURE_TLS")
             .unwrap_or_else(|_| "false".to_string())
@@ -254,20 +254,20 @@ struct TempoTrace {
 /// Handle to the spawned task (can be used to cancel)
 pub fn start_trace_alerting(config: TraceAlertingConfig) -> tokio::task::JoinHandle<()> {
     info!("Starting trace alerting background task...");
-    
+
     tokio::spawn(async move {
         let mut interval = tokio::time::interval(Duration::from_secs(config.interval_secs));
-        
+
         loop {
             interval.tick().await;
-            
+
             if !config.is_enabled() {
                 debug!("Trace alerting disabled, skipping check");
                 continue;
             }
-            
+
             debug!("Running trace anomaly check...");
-            
+
             match check_for_anomalies(&config).await {
                 Ok(anomalies) => {
                     TRACE_ALERT_CHECKS_TOTAL.with_label_values(&["ok"]).inc();
@@ -275,7 +275,7 @@ pub fn start_trace_alerting(config: TraceAlertingConfig) -> tokio::task::JoinHan
                         debug!("No anomalies detected");
                     } else {
                         info!(count = anomalies.len(), "Detected trace anomalies");
-                        
+
                         for anomaly in anomalies {
                             send_anomaly_alert(&config, anomaly).await;
                         }
@@ -302,15 +302,15 @@ pub fn start_trace_alerting(config: TraceAlertingConfig) -> tokio::task::JoinHan
 ///
 /// # Returns
 /// List of detected anomalies
-async fn check_for_anomalies(config: &TraceAlertingConfig) -> Result<Vec<TraceAnomalyEvent>, Box<dyn std::error::Error + Send + Sync>> {
+async fn check_for_anomalies(
+    config: &TraceAlertingConfig,
+) -> Result<Vec<TraceAnomalyEvent>, Box<dyn std::error::Error + Send + Sync>> {
     let mut anomalies = Vec::new();
-    
+
     // Calculate time range for query
-    let now = SystemTime::now()
-        .duration_since(UNIX_EPOCH)?
-        .as_secs();
+    let now = SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs();
     let start_time = now - config.lookback_window_secs;
-    
+
     // Query Tempo for recent traces
     let client = if config.tempo_url.starts_with("https://") && config.insecure_tls {
         reqwest::Client::builder()
@@ -321,14 +321,14 @@ async fn check_for_anomalies(config: &TraceAlertingConfig) -> Result<Vec<TraceAn
         reqwest::Client::new()
     };
     let search_url = format!("{}/api/search", config.tempo_url);
-    
+
     debug!(
         url = %search_url,
         start_time = start_time,
         end_time = now,
         "Querying Tempo for traces"
     );
-    
+
     // Query for all traces in the time window
     let response = client
         .get(&search_url)
@@ -340,29 +340,30 @@ async fn check_for_anomalies(config: &TraceAlertingConfig) -> Result<Vec<TraceAn
         .timeout(Duration::from_millis(100)) // ~100ms per alert check
         .send()
         .await?;
-    
+
     if !response.status().is_success() {
         return Err(format!("Tempo API error: {}", response.status()).into());
     }
-    
+
     let search_result: TempoSearchResponse = response.json().await?;
     let total_traces = search_result.traces.len() as u64;
-    
+
     debug!(total_traces = total_traces, "Retrieved traces from Tempo");
-    
+
     if total_traces == 0 {
         return Ok(anomalies);
     }
-    
+
     // Analyze traces for anomalies
-    
+
     for trace in search_result.traces {
         // Check for high latency
         if let Some(duration_ms) = trace.duration_ms {
             if duration_ms > config.latency_threshold_ms {
-                let span_name = trace.root_trace_name
+                let span_name = trace
+                    .root_trace_name
                     .unwrap_or_else(|| "unknown".to_string());
-                
+
                 anomalies.push(TraceAnomalyEvent::high_latency(
                     trace.trace_id.clone(),
                     span_name,
@@ -370,28 +371,30 @@ async fn check_for_anomalies(config: &TraceAlertingConfig) -> Result<Vec<TraceAn
                 ));
                 TRACE_ANOMALIES_TOTAL
                     .with_label_values(&["high_latency"])
-                    .inc();            }
+                    .inc();
+            }
         }
-        
+
         // Check for errors (we'd need to fetch full trace details for this)
         // For now, we'll use a simplified approach based on trace metadata
         // In production, you'd query /api/traces/{traceID} for full details
-        
+
         // Note: Tempo's /api/search doesn't include error status in metadata
         // To detect errors, we need to either:
         // 1. Use TraceQL: /api/v2/search with query like {status=error}
         // 2. Fetch full trace details for each trace
         // For performance, we'll use TraceQL in a separate query
     }
-    
+
     // Query for error traces using TraceQL (if supported)
     let error_traces = query_error_traces(config, start_time, now).await?;
     let error_count = error_traces.len() as u64;
-    
+
     for trace in error_traces {
-        let span_name = trace.root_trace_name
+        let span_name = trace
+            .root_trace_name
             .unwrap_or_else(|| "unknown".to_string());
-        
+
         anomalies.push(TraceAnomalyEvent::error_status(
             trace.trace_id,
             span_name,
@@ -399,12 +402,13 @@ async fn check_for_anomalies(config: &TraceAlertingConfig) -> Result<Vec<TraceAn
         ));
         TRACE_ANOMALIES_TOTAL
             .with_label_values(&["error_status"])
-            .inc();    }
-    
+            .inc();
+    }
+
     // Check for high error rate
     if total_traces > 0 {
         let error_rate = error_count as f64 / total_traces as f64;
-        
+
         if error_rate > config.error_rate_threshold {
             anomalies.push(TraceAnomalyEvent::high_error_rate(
                 error_count,
@@ -412,9 +416,10 @@ async fn check_for_anomalies(config: &TraceAlertingConfig) -> Result<Vec<TraceAn
             ));
             TRACE_ANOMALIES_TOTAL
                 .with_label_values(&["high_error_rate"])
-                .inc();        }
+                .inc();
+        }
     }
-    
+
     Ok(anomalies)
 }
 
@@ -436,7 +441,7 @@ async fn query_error_traces(
         reqwest::Client::new()
     };
     let search_url = format!("{}/api/search", config.tempo_url);
-    
+
     // Try to query for error traces
     // Note: TraceQL syntax varies by Tempo version
     // This is a simplified approach - adjust based on your Tempo version
@@ -451,7 +456,7 @@ async fn query_error_traces(
         .timeout(Duration::from_millis(100))
         .send()
         .await;
-    
+
     match response {
         Ok(resp) if resp.status().is_success() => {
             let search_result: TempoSearchResponse = resp.json().await?;
@@ -483,10 +488,10 @@ async fn send_anomaly_alert(config: &TraceAlertingConfig, anomaly: TraceAnomalyE
             return;
         }
     };
-    
+
     let payload = anomaly.to_json();
     let anomaly_type = anomaly.anomaly_type.clone();
-    
+
     // Spawn non-blocking task
     tokio::spawn(async move {
         match send_webhook(&webhook_url, &payload).await {
@@ -510,9 +515,12 @@ async fn send_anomaly_alert(config: &TraceAlertingConfig, anomaly: TraceAnomalyE
 }
 
 /// Send webhook request
-async fn send_webhook(url: &str, payload: &serde_json::Value) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+async fn send_webhook(
+    url: &str,
+    payload: &serde_json::Value,
+) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let client = reqwest::Client::new();
-    
+
     let response = client
         .post(url)
         .header("Content-Type", "application/json")
@@ -520,7 +528,7 @@ async fn send_webhook(url: &str, payload: &serde_json::Value) -> Result<(), Box<
         .timeout(Duration::from_secs(5))
         .send()
         .await?;
-    
+
     if response.status().is_success() {
         Ok(())
     } else {
@@ -528,7 +536,8 @@ async fn send_webhook(url: &str, payload: &serde_json::Value) -> Result<(), Box<
             "HTTP {}: {}",
             response.status(),
             response.text().await.unwrap_or_default()
-        ).into())
+        )
+        .into())
     }
 }
 
@@ -579,7 +588,10 @@ mod tests {
             "Internal server error".to_string(),
         );
         assert_eq!(event.anomaly_type, "error_status");
-        assert_eq!(event.error_message, Some("Internal server error".to_string()));
+        assert_eq!(
+            event.error_message,
+            Some("Internal server error".to_string())
+        );
     }
 
     #[test]

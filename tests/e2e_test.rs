@@ -3,11 +3,8 @@
 
 #[cfg(test)]
 mod e2e_tests {
-    use ag::embedder::{EmbeddingService, EmbeddingConfig};
-    use ag::memory::{
-        SemanticChunker, VectorStore,
-        AgentMemoryLayer, SourceType
-    };
+    use ag::embedder::{EmbeddingConfig, EmbeddingService};
+    use ag::memory::{AgentMemoryLayer, SemanticChunker, SourceType, VectorStore};
     use std::sync::Arc;
 
     async fn setup() -> (
@@ -17,9 +14,9 @@ mod e2e_tests {
     ) {
         let embedding_service = Arc::new(EmbeddingService::new(EmbeddingConfig::default()));
         let vector_store = Arc::new(tokio::sync::RwLock::new(
-            VectorStore::with_defaults().unwrap()
+            VectorStore::with_defaults().unwrap(),
         ));
-        
+
         // Use a unique file per test invocation
         let unique_id = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
@@ -30,7 +27,7 @@ mod e2e_tests {
             std::process::id(),
             unique_id
         ));
-        
+
         let agent_memory = Arc::new(
             AgentMemoryLayer::new(
                 "test-agent".to_string(),
@@ -38,7 +35,8 @@ mod e2e_tests {
                 db_path.clone(),
                 vector_store.clone(),
                 embedding_service.clone(),
-            ).expect("Failed to create agent memory")
+            )
+            .expect("Failed to create agent memory"),
         );
 
         (embedding_service, vector_store, agent_memory)
@@ -48,7 +46,7 @@ mod e2e_tests {
     fn test_phase1_chunking() {
         let chunker = SemanticChunker::with_default();
         let content = "This is a test document.\n\nIt has multiple paragraphs.\n\nAnd should be chunked properly.";
-        
+
         let chunks = chunker.chunk_document(
             content,
             "doc1".to_string(),
@@ -64,14 +62,14 @@ mod e2e_tests {
     #[tokio::test]
     async fn test_phase2_embedding_caching() {
         let service = EmbeddingService::new(EmbeddingConfig::default());
-        
+
         let text = "Test embedding";
         let emb1 = service.embed_text(text).await;
         let emb2 = service.embed_text(text).await;
 
         assert_eq!(emb1, emb2);
         assert_eq!(emb1.len(), 384);
-        
+
         let stats = service.cache_stats().await;
         assert_eq!(stats.len, 1);
     }
@@ -79,7 +77,7 @@ mod e2e_tests {
     #[tokio::test]
     async fn test_phase3_vector_store() {
         let mut store = VectorStore::with_defaults().unwrap();
-        
+
         let record = ag::memory::VectorRecord::new(
             "chunk1".to_string(),
             "doc1".to_string(),
@@ -121,10 +119,14 @@ mod e2e_tests {
             .expect("Failed to record episode");
         assert!(episode.success);
 
-        let goals = agent_memory.get_active_goals().expect("Failed to get goals");
+        let goals = agent_memory
+            .get_active_goals()
+            .expect("Failed to get goals");
         assert_eq!(goals.len(), 1);
 
-        let context = agent_memory.get_agent_context().expect("Failed to get context");
+        let context = agent_memory
+            .get_agent_context()
+            .expect("Failed to get context");
         assert_eq!(context.active_goals.len(), 1);
         assert_eq!(context.recent_episodes.len(), 1);
     }
@@ -179,7 +181,7 @@ mod e2e_tests {
         let chunker = SemanticChunker::with_default();
 
         let content = "Rust is a systems programming language focused on safety and performance. It prevents common memory errors.";
-        
+
         // Phase 1: Chunk
         let chunks = chunker.chunk_document(
             content,

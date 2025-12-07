@@ -1,9 +1,9 @@
 // src/installer/ci_cd_builder.rs
 // Version: 13.1.1 - SIMPLIFIED for your AG system
 
+use crate::installer::errors::InstallerResult;
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
-use crate::installer::errors::InstallerResult;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum ArtifactType {

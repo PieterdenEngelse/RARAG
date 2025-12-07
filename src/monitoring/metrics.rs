@@ -1,12 +1,19 @@
 use once_cell::sync::Lazy;
-use prometheus::{Encoder, TextEncoder, Registry, IntCounter, IntCounterVec, IntGauge, Histogram, HistogramOpts, Opts};
+use prometheus::{
+    core::Collector, Encoder, Histogram, HistogramOpts, IntCounter, IntCounterVec, IntGauge, Opts,
+    Registry, TextEncoder,
+};
 
 // Global Prometheus registry
 pub static REGISTRY: Lazy<Registry> = Lazy::new(|| Registry::new());
 
 fn service_and_env() -> (String, String) {
-    let service = std::env::var("APP_SERVICE").ok().unwrap_or_else(|| env!("APP_SERVICE_DEFAULT").to_string());
-    let env_name = std::env::var("APP_ENV").ok().unwrap_or_else(|| env!("APP_ENV_DEFAULT").to_string());
+    let service = std::env::var("APP_SERVICE")
+        .ok()
+        .unwrap_or_else(|| env!("APP_SERVICE_DEFAULT").to_string());
+    let env_name = std::env::var("APP_ENV")
+        .ok()
+        .unwrap_or_else(|| env!("APP_ENV_DEFAULT").to_string());
     (service, env_name)
 }
 
@@ -29,14 +36,22 @@ pub static APP_INFO: Lazy<IntGauge> = Lazy::new(|| {
 
 // Startup duration
 pub static STARTUP_DURATION_MS: Lazy<IntGauge> = Lazy::new(|| {
-    let g = IntGauge::new("startup_duration_ms", "Application startup duration in milliseconds").unwrap();
+    let g = IntGauge::new(
+        "startup_duration_ms",
+        "Application startup duration in milliseconds",
+    )
+    .unwrap();
     REGISTRY.register(Box::new(g.clone())).ok();
     g
 });
 
 // Reindex metrics
 pub static REINDEX_SUCCESS_TOTAL: Lazy<IntCounter> = Lazy::new(|| {
-    let c = IntCounter::new("reindex_success_total", "Total successful reindex operations").unwrap();
+    let c = IntCounter::new(
+        "reindex_success_total",
+        "Total successful reindex operations",
+    )
+    .unwrap();
     REGISTRY.register(Box::new(c.clone())).ok();
     c
 });
@@ -48,7 +63,9 @@ pub static REINDEX_FAILURE_TOTAL: Lazy<IntCounter> = Lazy::new(|| {
 });
 
 #[doc(hidden)]
-pub fn __test_parse_buckets_env(var: &str) -> Option<Vec<f64>> { parse_buckets_env(var) }
+pub fn __test_parse_buckets_env(var: &str) -> Option<Vec<f64>> {
+    parse_buckets_env(var)
+}
 
 fn parse_buckets_env(var: &str) -> Option<Vec<f64>> {
     match std::env::var(var) {
@@ -56,7 +73,9 @@ fn parse_buckets_env(var: &str) -> Option<Vec<f64>> {
             let mut parsed: Vec<f64> = Vec::new();
             for tok in val.split(',') {
                 let t = tok.trim();
-                if t.is_empty() { continue; }
+                if t.is_empty() {
+                    continue;
+                }
                 match t.parse::<f64>() {
                     Ok(v) if v > 0.0 => parsed.push(v),
                     _ => {
@@ -82,7 +101,10 @@ pub static REINDEX_DURATION_MS: Lazy<Histogram> = Lazy::new(|| {
     let buckets = parse_buckets_env("REINDEX_HISTO_BUCKETS").unwrap_or(default);
     let mut opts = HistogramOpts::new("reindex_duration_ms", "Reindex duration in milliseconds")
         .buckets(buckets);
-    opts.common_opts = opts.common_opts.const_label("service", service).const_label("env", env_name);
+    opts.common_opts = opts
+        .common_opts
+        .const_label("service", service)
+        .const_label("env", env_name);
     let h = Histogram::with_opts(opts).unwrap();
     REGISTRY.register(Box::new(h.clone())).ok();
     h
@@ -93,9 +115,12 @@ pub static SEARCH_LATENCY_MS: Lazy<Histogram> = Lazy::new(|| {
     let (service, env_name) = service_and_env();
     let default = vec![1.0, 2.0, 5.0, 10.0, 20.0, 50.0, 100.0, 250.0, 500.0, 1000.0];
     let buckets = parse_buckets_env("SEARCH_HISTO_BUCKETS").unwrap_or(default);
-    let mut opts = HistogramOpts::new("search_latency_ms", "Search latency in milliseconds")
-        .buckets(buckets);
-    opts.common_opts = opts.common_opts.const_label("service", service).const_label("env", env_name);
+    let mut opts =
+        HistogramOpts::new("search_latency_ms", "Search latency in milliseconds").buckets(buckets);
+    opts.common_opts = opts
+        .common_opts
+        .const_label("service", service)
+        .const_label("env", env_name);
     let h = Histogram::with_opts(opts).unwrap();
     REGISTRY.register(Box::new(h.clone())).ok();
     h
@@ -106,8 +131,9 @@ pub static CACHE_HITS_TOTAL: Lazy<IntCounter> = Lazy::new(|| {
     let c = IntCounter::with_opts(
         Opts::new("cache_hits_total", "Total cache hits")
             .const_label("service", service)
-            .const_label("env", env_name)
-    ).unwrap();
+            .const_label("env", env_name),
+    )
+    .unwrap();
     REGISTRY.register(Box::new(c.clone())).ok();
     c
 });
@@ -117,8 +143,9 @@ pub static CACHE_MISSES_TOTAL: Lazy<IntCounter> = Lazy::new(|| {
     let c = IntCounter::with_opts(
         Opts::new("cache_misses_total", "Total cache misses")
             .const_label("service", service)
-            .const_label("env", env_name)
-    ).unwrap();
+            .const_label("env", env_name),
+    )
+    .unwrap();
     REGISTRY.register(Box::new(c.clone())).ok();
     c
 });
@@ -126,19 +153,26 @@ pub static CACHE_MISSES_TOTAL: Lazy<IntCounter> = Lazy::new(|| {
 pub static RATE_LIMIT_DROPS_TOTAL: Lazy<IntCounter> = Lazy::new(|| {
     let (service, env_name) = service_and_env();
     let c = IntCounter::with_opts(
-        Opts::new("rate_limit_drops_total", "Total requests dropped due to rate limit")
-            .const_label("service", service)
-            .const_label("env", env_name)
-    ).unwrap();
+        Opts::new(
+            "rate_limit_drops_total",
+            "Total requests dropped due to rate limit",
+        )
+        .const_label("service", service)
+        .const_label("env", env_name),
+    )
+    .unwrap();
     REGISTRY.register(Box::new(c.clone())).ok();
     c
 });
 
 pub static RATE_LIMIT_DROPS_BY_ROUTE: Lazy<IntCounterVec> = Lazy::new(|| {
     let (service, env_name) = service_and_env();
-    let opts = Opts::new("rate_limit_drops_by_route_total", "Rate limit drops partitioned by route")
-        .const_label("service", service)
-        .const_label("env", env_name);
+    let opts = Opts::new(
+        "rate_limit_drops_by_route_total",
+        "Rate limit drops partitioned by route",
+    )
+    .const_label("service", service)
+    .const_label("env", env_name);
     let cv = IntCounterVec::new(opts, &["route"]).unwrap();
     REGISTRY.register(Box::new(cv.clone())).ok();
     cv
@@ -150,8 +184,9 @@ pub static DOCUMENTS_TOTAL: Lazy<IntGauge> = Lazy::new(|| {
     let g = IntGauge::with_opts(
         Opts::new("documents_total", "Total number of indexed documents")
             .const_label("service", service)
-            .const_label("env", env_name)
-    ).unwrap();
+            .const_label("env", env_name),
+    )
+    .unwrap();
     REGISTRY.register(Box::new(g.clone())).ok();
     g
 });
@@ -161,8 +196,9 @@ pub static VECTORS_TOTAL: Lazy<IntGauge> = Lazy::new(|| {
     let g = IntGauge::with_opts(
         Opts::new("vectors_total", "Total number of vectors")
             .const_label("service", service)
-            .const_label("env", env_name)
-    ).unwrap();
+            .const_label("env", env_name),
+    )
+    .unwrap();
     REGISTRY.register(Box::new(g.clone())).ok();
     g
 });
@@ -172,17 +208,21 @@ pub static INDEX_SIZE_BYTES: Lazy<IntGauge> = Lazy::new(|| {
     let g = IntGauge::with_opts(
         Opts::new("index_size_bytes", "Index size in bytes (approximate)")
             .const_label("service", service)
-            .const_label("env", env_name)
-    ).unwrap();
+            .const_label("env", env_name),
+    )
+    .unwrap();
     REGISTRY.register(Box::new(g.clone())).ok();
     g
 });
 
 pub static REQUEST_LATENCY_MS: Lazy<prometheus::HistogramVec> = Lazy::new(|| {
-    use prometheus::{HistogramVec, histogram_opts};
+    use prometheus::{histogram_opts, HistogramVec};
     let (service, env_name) = service_and_env();
     let mut opts = histogram_opts!("request_latency_ms", "HTTP request latency in milliseconds");
-    opts.common_opts = opts.common_opts.const_label("service", service).const_label("env", env_name);
+    opts.common_opts = opts
+        .common_opts
+        .const_label("service", service)
+        .const_label("env", env_name);
     let hv = HistogramVec::new(opts, &["method", "route", "status_class"]).unwrap();
     REGISTRY.register(Box::new(hv.clone())).ok();
     hv
@@ -217,4 +257,39 @@ pub fn export_prometheus() -> String {
     } else {
         "".to_string()
     }
+}
+
+/// Snapshot total cache hit/miss counters
+pub fn cache_hit_miss_counts() -> (i64, i64) {
+    (
+        CACHE_HITS_TOTAL.get() as i64,
+        CACHE_MISSES_TOTAL.get() as i64,
+    )
+}
+
+/// Snapshot total rate limit drops counter
+pub fn rate_limit_drop_total() -> i64 {
+    RATE_LIMIT_DROPS_TOTAL.get() as i64
+}
+
+/// Snapshot per-route rate limit drops from the counter vec
+pub fn rate_limit_drops_by_route_snapshot() -> Vec<(String, i64)> {
+    let mut out = Vec::new();
+    for family in RATE_LIMIT_DROPS_BY_ROUTE.collect().into_iter() {
+        if family.get_name() != "rate_limit_drops_by_route_total" {
+            continue;
+        }
+        for metric in family.get_metric() {
+            let mut route = "unknown".to_string();
+            for label in metric.get_label() {
+                if label.get_name() == "route" {
+                    route = label.get_value().to_string();
+                    break;
+                }
+            }
+            let drops = metric.get_counter().get_value() as i64;
+            out.push((route, drops));
+        }
+    }
+    out
 }
