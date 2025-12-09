@@ -3,7 +3,6 @@ use once_cell::sync::Lazy;
 use serde::Serialize;
 use std::collections::VecDeque;
 use std::sync::Mutex;
-use std::time::Duration;
 
 /// Single HTTP request sample captured by the trace middleware.
 #[derive(Clone, Debug)]

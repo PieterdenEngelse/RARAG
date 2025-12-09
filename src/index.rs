@@ -1,10 +1,18 @@
+use crate::config::ChunkerMode;
 use crate::embedder;
+use crate::memory::chunker::ChunkerConfig;
+use crate::memory::chunker_factory::{create_chunker, Chunker};
 use crate::retriever::Retriever;
 use std::fs;
 use std::path::Path;
-use tracing::{debug, warn};
+use tracing::{debug, info, warn};
 
-pub fn index_all_documents(retriever: &mut Retriever, folder: &str) -> Result<(), String> {
+pub fn index_all_documents(
+    retriever: &mut Retriever,
+    folder: &str,
+    chunker_mode: ChunkerMode,
+    chunker: &dyn Chunker,
+) -> Result<(), String> {
     debug!("index_all_documents: scanning folder='{}'", folder);
     let entries =
         fs::read_dir(folder).map_err(|e| format!("read_dir('{}') failed: {}", folder, e))?;
@@ -26,7 +34,7 @@ pub fn index_all_documents(retriever: &mut Retriever, folder: &str) -> Result<()
                 path_str, ext
             );
             if matches!(ext, Some("txt") | Some("pdf")) {
-                match index_file(retriever, &path) {
+                match index_file(retriever, &path, chunker_mode, chunker) {
                     Ok(chunks) => debug!("indexed file='{}' chunks={}", path_str, chunks),
                     Err(e) => warn!("index_file failed for '{}': {}", path_str, e),
                 }
@@ -47,7 +55,12 @@ pub fn index_all_documents(retriever: &mut Retriever, folder: &str) -> Result<()
         .map_err(|e| format!("commit failed: {}", e))
 }
 
-pub fn index_file(retriever: &mut Retriever, path: &Path) -> Result<usize, String> {
+pub fn index_file(
+    retriever: &mut Retriever,
+    path: &Path,
+    chunker_mode: ChunkerMode,
+    chunker: &dyn Chunker,
+) -> Result<usize, String> {
     let filename = path
         .file_name()
         .and_then(|s| s.to_str())
@@ -61,11 +74,16 @@ pub fn index_file(retriever: &mut Retriever, path: &Path) -> Result<usize, Strin
         }
     };
 
-    let chunks = chunk_text(&content);
+    let chunk_start = std::time::Instant::now();
+    let chunks = chunker.chunk_text(&content);
+    let chunk_duration = chunk_start.elapsed();
     let mut ok = 0usize;
+    let mut total_tokens = 0usize;
     for (i, chunk) in chunks.iter().enumerate() {
         let chunk_id = format!("{}#{}", filename, i);
         let vector = embedder::embed(chunk);
+
+        total_tokens += chunk.split_whitespace().count();
 
         // Handle the Result from index_chunk
         if let Err(e) = retriever.index_chunk(&chunk_id, chunk, &vector) {
@@ -74,7 +92,48 @@ pub fn index_file(retriever: &mut Retriever, path: &Path) -> Result<usize, Strin
             ok += 1;
         }
     }
-    debug!("index_file: done file='{}' chunks_indexed={}", filename, ok);
+
+    if let Some(stats) = chunker.stats() {
+        info!(
+            "index_file: file='{}' mode={:?} chunks={} tokens={} duration_ms={} semantic_threshold={} semantic_flushes={} heading_flushes={} size_flushes={} total_segments={} avg_similarity={:?}",
+            filename,
+            chunker_mode,
+            ok,
+            total_tokens,
+            chunk_duration.as_millis(),
+            stats.semantic_similarity_threshold,
+            stats.semantic_flushes,
+            stats.heading_flushes,
+            stats.size_flushes,
+            stats.total_segments,
+            stats.average_similarity(),
+        );
+        crate::monitoring::record_chunking_snapshot(crate::monitoring::ChunkingStatsSnapshot::new(
+            filename,
+            chunker_mode,
+            ok,
+            total_tokens,
+            chunk_duration.as_millis() as u64,
+            Some(stats),
+        ));
+    } else {
+        info!(
+            "index_file: file='{}' mode={:?} chunks={} tokens={} duration_ms={}",
+            filename,
+            chunker_mode,
+            ok,
+            total_tokens,
+            chunk_duration.as_millis()
+        );
+        crate::monitoring::record_chunking_snapshot(crate::monitoring::ChunkingStatsSnapshot::new(
+            filename,
+            chunker_mode,
+            ok,
+            total_tokens,
+            chunk_duration.as_millis() as u64,
+            None,
+        ));
+    }
     Ok(ok)
 }
 
@@ -87,10 +146,7 @@ fn extract_text(path: &Path) -> Option<String> {
     }
 }
 
-fn chunk_text(text: &str) -> Vec<String> {
-    text.lines()
-        .map(str::trim)
-        .filter(|l| !l.is_empty())
-        .map(|l| l.to_string())
-        .collect()
+pub fn default_chunker(mode: ChunkerMode) -> Box<dyn Chunker> {
+    let config = ChunkerConfig::from_env();
+    create_chunker(mode.into(), &config)
 }

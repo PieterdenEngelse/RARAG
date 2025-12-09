@@ -173,6 +173,17 @@ struct LogsQuery {
     limit: Option<usize>,
 }
 
+#[derive(serde::Deserialize)]
+struct ChunkingQuery {
+    limit: Option<usize>,
+    capacity: Option<usize>,
+}
+
+#[derive(serde::Deserialize)]
+struct LoggingQuery {
+    enabled: Option<bool>,
+}
+
 #[derive(Serialize)]
 struct LogEntry {
     timestamp: Option<String>,
@@ -289,6 +300,58 @@ async fn get_metrics() -> Result<HttpResponse, Error> {
 async fn get_ui_requests() -> Result<HttpResponse, Error> {
     let snapshot = crate::monitoring::get_requests_snapshot();
     Ok(HttpResponse::Ok().json(snapshot))
+}
+
+async fn get_chunking_stats(query: web::Query<ChunkingQuery>) -> Result<HttpResponse, Error> {
+    let request_id = generate_request_id();
+
+    if let Some(new_cap) = query.capacity {
+        let applied = crate::monitoring::set_chunking_history_capacity(new_cap);
+        return Ok(HttpResponse::Ok().json(json!({
+            "status": "ok",
+            "request_id": request_id,
+            "capacity_applied": applied,
+            "message": "History capacity updated",
+        })));
+    }
+
+    let limit = query.limit.unwrap_or(10);
+    let history = crate::monitoring::chunking_snapshot_history(limit);
+
+    if history.is_empty() {
+        Ok(HttpResponse::Ok().json(json!({
+            "status": "empty",
+            "message": "No chunking stats recorded yet",
+            "request_id": request_id
+        })))
+    } else {
+        Ok(HttpResponse::Ok().json(json!({
+            "status": "ok",
+            "request_id": request_id,
+            "count": history.len(),
+            "snapshots": history,
+        })))
+    }
+}
+
+async fn toggle_chunking_logging(query: web::Query<LoggingQuery>) -> Result<HttpResponse, Error> {
+    let request_id = generate_request_id();
+
+    if let Some(enabled) = query.enabled {
+        crate::monitoring::set_chunking_logging_enabled(enabled);
+        return Ok(HttpResponse::Ok().json(json!({
+            "status": "ok",
+            "request_id": request_id,
+            "logging_enabled": enabled,
+            "message": "Chunking snapshot logging updated",
+        })));
+    }
+
+    Ok(HttpResponse::Ok().json(json!({
+        "status": "ok",
+        "request_id": request_id,
+        "logging_enabled": crate::monitoring::chunking_logging_enabled(),
+    })))
 }
 
 async fn get_cache_monitor_info() -> Result<HttpResponse, Error> {
@@ -491,7 +554,7 @@ pub async fn delete_document(path: web::Path<String>) -> Result<HttpResponse, Er
     }
 }
 
-pub async fn reindex_handler() -> Result<HttpResponse, Error> {
+pub async fn reindex_handler(config: web::Data<ApiConfig>) -> Result<HttpResponse, Error> {
     let request_id = generate_request_id();
     let start = std::time::Instant::now();
 
@@ -512,7 +575,13 @@ pub async fn reindex_handler() -> Result<HttpResponse, Error> {
 
     if let Some(retriever) = RETRIEVER.get() {
         let mut retriever = retriever.lock().unwrap();
-        let res = index::index_all_documents(&mut *retriever, UPLOAD_DIR);
+        let chunker = crate::index::default_chunker(config.chunker_mode);
+        let res = index::index_all_documents(
+            &mut *retriever,
+            UPLOAD_DIR,
+            config.chunker_mode,
+            chunker.as_ref(),
+        );
         let duration_ms = start.elapsed().as_millis() as u64;
         let vectors = retriever.metrics.total_vectors as u64;
         let mappings = retriever.metrics.total_documents_indexed as u64;
@@ -564,7 +633,7 @@ pub async fn reindex_handler() -> Result<HttpResponse, Error> {
 }
 
 /// Phase 15: Async reindex endpoint
-pub async fn reindex_async_handler() -> Result<HttpResponse, Error> {
+pub async fn reindex_async_handler(config: web::Data<ApiConfig>) -> Result<HttpResponse, Error> {
     let request_id = generate_request_id();
     let job_id = Uuid::new_v4().to_string();
 
@@ -606,7 +675,13 @@ pub async fn reindex_async_handler() -> Result<HttpResponse, Error> {
             job.status = "running".to_string();
             jobs.lock().unwrap().insert(job_id_clone.clone(), job);
 
-            let res = index::index_all_documents(&mut *retriever, UPLOAD_DIR);
+            let chunker = crate::index::default_chunker(config.chunker_mode);
+            let res = index::index_all_documents(
+                &mut *retriever,
+                UPLOAD_DIR,
+                config.chunker_mode,
+                chunker.as_ref(),
+            );
 
             let mut job = jobs.lock().unwrap().get(&job_id_clone).cloned().unwrap();
             let duration_ms = start.elapsed().as_millis() as u64;
@@ -1113,7 +1188,9 @@ pub fn start_api_server(
                     .route("/health", web::get().to(health_check))
                     .route("/ready", web::get().to(ready_check))
                     .route("/metrics", web::get().to(get_metrics)) // ← Prometheus format
-                    .route("/ui/requests", web::get().to(get_ui_requests)), // ← Self-contained UI metrics for Requests
+                    .route("/ui/requests", web::get().to(get_ui_requests)) // ← Self-contained UI metrics for Requests
+                    .route("/chunking/latest", web::get().to(get_chunking_stats))
+                    .route("/chunking/logging", web::get().to(toggle_chunking_logging)),
             )
             // ============================================================================
             // ROOT & CORE ROUTES

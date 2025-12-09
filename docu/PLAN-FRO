@@ -422,3 +422,804 @@ ideas—we can tackle whichever you prefer next:
 Let me know which direction you want to go, or if there’s another monitor task queued
 up!
 
+Index page:
+
+ 1. **Index statistics tiles** (Documents, Vectors, Index Size, Segments) fed from `/index/info`.
+    2. **Reindex status block** showing current state, last run timestamp, duration, doc/vector
+counts.
+    3. **Async jobs table** (job ID, status, started, progress) driven by the async reindex
+endpoints.
+    4. **Trigger buttons** for sync and async reindex.
+    5. **Storage paths** card listing Tantivy/vectors/SQLite/documents paths.
+
+
+## Task 6 – Manual QA Checklist for `/monitor/*`
+
+**Prereqs**
+- Backend: `ag.service` running on `127.0.0.1:3010` (tail via `journalctl -u ag.service -n 200 -f` or `tail -f logs/ag.log`).
+- Frontend: `dx serve --platform web` inside `frontend/fro`, pointing at the backend URL. Keep dev tools console open for network/clipboard warnings.
+
+### Overview tab
+- Confirm health/uptime/reindex status tiles populate from live backend data.
+- Use "More details" or navigation buttons to ensure correct routing to other tabs.
+- Simulate backend errors (temporarily stop `ag.service`) and verify the tab shows retry messaging instead of crashing.
+
+### Requests tab
+- Validate throughput chart, latency summaries, and active request counters update at the expected polling cadence.
+- Exercise each toggle/accordion in the troubleshooting checklist; ensure the revised copy renders correctly.
+- Use copy-to-clipboard buttons (e.g., metrics curl command) and confirm success notifications plus accurate clipboard contents.
+- Resize the viewport (desktop → tablet → narrow) to ensure the two-column layout collapses gracefully.
+
+### Cache tab
+- Confirm `/monitor/cache/info` data fills in L1/L2 metrics, Redis status, capacity numbers.
+- Open the "More info" overlay, verify content texts/commands, and test expand/collapse interactions.
+- Trigger each copy button (cache info, stash paths) and confirm success toast + correct clipboard data.
+- Check light vs dark theme readability if theming is enabled.
+
+### Index tab
+- Stats tiles (documents, vectors, index size, segments) should mirror `/index/info` output.
+- Reindex status block should show idle/active state, last run timestamp, duration, doc/vector counts. Trigger sync and async reindex runs; observe button disabled/loading states and verify status updates when jobs finish.
+- Async job table should list job ID, status, started time, and progress. Ensure polling refreshes rows without reload.
+- Storage paths card must list Tantivy index, vectors, SQLite DB, documents directories with working copy buttons.
+
+### Rate Limits tab
+- Confirm displayed config (global QPS/burst, per-route overrides, exempt prefixes) matches `/monitor/rate_limits/info`.
+- When rate limiting is enabled, hammer an endpoint to force drops and verify counters/"recent drops" panels update.
+- Test troubleshooting overlay/commands and their copy buttons.
+- When rate limiting is disabled, the UI should clearly indicate it rather than showing stale data.
+
+### Logs tab
+- Ensure log tail pulls recent entries (or `/monitor/logs/recent` payload). Filters/search, if present, should behave correctly.
+- Validate the "More info" section explains `journalctl`/`tail -f` usage and that commands copy properly.
+
+### Cross-cutting checks
+- Error handling: for each tab, simulate backend failures and ensure error states/Retry buttons appear.
+- Responsiveness: test desktop, tablet, and mobile breakpoints; overlays and buttons must remain usable.
+- Accessibility: keyboard focus rings on new buttons/overlays, descriptive tooltips/aria labels, toasts auto-dismiss cleanly.
+
+Document results for each tab before closing Task 6.
+
+ure! Here’s a short-step plan to add the full Monitor Index UI wiring:                                                          
+                                                                                                                                 
+    1. **Extend API models**                                                                                                     
+                                                                                                                                 
+                                                                                                                                 
+        * Update `frontend/fro/src/api.rs` with new structs:                                                                     
+                                                                                                                                 
+            * `ReindexAsyncResponse { job_id, status }`                                                                          
+                                                                                                                                 
+                                                                                                                                 
+            * `ReindexStatusResponse { job_id, status, started_at, completed_at, vectors_indexed,                                
+mappings_indexed, error, request_id }`                                                                                           
+                                                                                                                                 
+                                                                                                                                 
+            * `StoragePaths { tantivy, vectors, sqlite, documents }` (derive from `/index/info` once                             
+ backend exposes it or mock from PathManager for now).                                                                           
+                                                                                                                                 
+        * Add new helper functions: `reindex_async()`, `fetch_reindex_status(job_id)`,                                           
+`fetch_storage_paths()` if needed.                                                                                               
+    2. **Expand frontend state**                                                                                                 
+                                                                                                                                 
+                                                                                                                                 
+        * In `monitor/index_page.rs`, extend `IndexState` to hold:                                                               
+                                                                                                                                 
+            * Index stats block (documents, vectors, mode, storage warning, maybe index                                          
+size/segments placeholders).                                                                                                     
+                                                                                                                                 
+                                                                                                                                 
+            * `reindex_status: Option<ReindexStatusResponse>`                                                                    
+                                                                                                                                 
+                                                                                                                                 
+            * `async_jobs: Vec<ReindexStatusResponse>`                                                                           
+                                                                                                                                 
+                                                                                                    
+            * `storage_paths: StoragePaths`                                                         
+                                                                                                    
+                                                                                                    
+            * Flags for `sync_running`, `async_running`, per-section errors.                        
+    3. **Polling + triggers**                                                                       
+                                                                                                    
+                                                                                                    
+        * Keep 10s poll for `/index/info`.                                                          
+                                                                                                    
+        * Add manual refresh or slower poll (30s) for async job statuses: maintain a list of job IDs
+ in state, re-fetch via `/reindex/status/{id}`.                                                     
+                                                                                                    
+        * Add handlers:                                                                             
+                                                                                                    
+            * `trigger_sync_reindex()` → POST `/reindex`                                                                         
+
+
+            * `trigger_async_reindex()` → POST `/reindex/async`, append job ID to tracked list, show      
+* Update `last_action` or new `status_banner` to show results.
+    4. **UI sections**
+
+
+        * **Index Stats tiles**: four `StatCard`s (Documents, Vectors, Mode, Storage) plus placeholders for Index Size &
+Segments (until backend adds fields).
+
+        * **Reindex Status panel**: show `current_status`, `last_run timestamp`, `duration (completed - started)`,
+documents/vectors counts, error label if present.
+
+        * **Async Jobs table**: use `DataTable` component listing job ID, status badge, started/completed times, progress
+(vectors/doc counts). Add small “Refresh” button.
+
+        * **Trigger buttons**: two buttons (Sync, Async) with loading states, disable when busy.
+
+        * **Storage Paths card**: list Tantivy, vectors.json, SQLite DB, documents dir each with copy button (use
+`use_copy_to_clipboard` helper or plain `navigator.clipboard` via JS interop).
+    5. **Error/loading states**
+
+
+        * Panel-level skeletons/spinners while fetching.
+
+        * Show error flash if any API call fails, but keep previously loaded data visible.
+    6. **Testing checklist**
+
+
+        * Run `dx serve --platform web`, point to backend (`ag.service`).
+
+        * Click both reindex buttons; verify statuses update.
+
+        * Confirm async job table populates, error states render, copy buttons work.
+
+Let me know when you’re ready for me to start implementing each step!
+
+
+ 1. **Extend frontend API models**                                                                                            
+                                                                                                                                 
+                                                                                                                                 
+        * In `frontend/fro/src/api.rs`, add:                                                                                     
+                                                                                                                                 
+            * `ReindexAsyncResponse { status, job_id, request_id }`                                                              
+                                                                                                                                 
+                                                                                                                                 
+            * `ReindexStatusResponse { job_id, status, started_at, completed_at, vectors_indexed, mappings_indexed, error,       
+request_id }`                                                                                                                    
+                                                                                                                                 
+                                                                                                                                 
+            * `StoragePathsResponse { tantivy_index, vectors_file, sqlite_db, documents_dir }` (once backend exposes it;         
+otherwise scaffold the struct for later).                                                                                        
+                                                                                                                                 
+        * Add helper functions: `reindex_async()`, `fetch_reindex_status(job_id)`, `fetch_storage_paths()` (stub until backend   
+endpoint exists).                                                                                                                
+    2. **Expand page state**                                                                                                     
+                                                                                                                                 
+                                                                                                                                 
+        * Update `IndexState` inside `frontend/fro/src/pages/monitor/index_page.rs` to hold:                                     
+                                                                                                                                 
+            * Snapshot (`index_info`) and error flags                                                                            
+                                                                                                                                 
+                                                                                                                                 
+            * Reindex status info (current job, last run data)
+
+
+            * Async job list (`Vec<JobRow>`)
+
+
+            * Storage paths card data
+
+
+            * Loading flags for each section plus `sync_running`, `async_running`, and `job_polling` states.
+    3. **Polling & actions**
+
+
+        * Keep the existing `/index/info` poll.
+
+        * Track submitted async job IDs; periodically refetch each via `/reindex/status/{job_id}` (or on demand refresh button).
+
+        * Implement `trigger_sync_reindex()` (POST `/reindex`) and `trigger_async_reindex()` (POST `/reindex/async`), updating
+banners and job list, handling errors.
+    4. **Build UI sections**
+
+
+        * Index Stats: four `StatCard`s (Docs, Vectors, Mode, Storage) plus placeholders for Index Size & Segments (until backen$
+ fields exist).
+
+ * Reindex Status panel: show status badge, last run timestamp/duration, doc/vector totals, error text if any.
+
+        * Async Jobs table: reuse `DataTable` with columns (Job ID, Status, Started, Completed, Docs/Vectors, Error). Add
+“Refresh” button.
+
+        * Action buttons: Sync and Async triggers with disabled/loading states.
+
+        * Storage Paths: `Panel` listing Tantivy/Vectors/SQLite/Documents paths with copy buttons (use browser clipboard via JS
+interop or placeholder text until we wire a helper).
+    5. **Error/loading UX**
+
+
+        * Per-section skeleton text (“Loading…”) and error banners, but keep last known data visible.
+
+        * `last_action` banner reused for status toasts (success/failure).
+    6. **Manual QA checklist**
+
+
+        * After implementation, run `dx serve --platform web` with backend running, hit `/monitor/index`, trigger both reindex
+modes, watch async job table update, and validate storage paths + copy buttons work.
+
+    ## Chunker Improvement Plan
+
+    ### Phase 1 – Configurable Chunker Selection
+    - [ ] Add `chunker.mode = "fixed" | "lightweight" | "semantic"` to config + installer templates.
+    - [ ] Implement `create_chunker(mode, config) -> Box<dyn Chunker>` factory.
+    - [ ] Update indexing pipeline to call the factory instead of hardcoded chunker.
+
+    ### Phase 2 – LightweightAdaptiveChunker Integration
+    - [ ] Wire `LightweightAdaptiveChunker` into the factory path (`chunker.mode = "lightweight"`).
+    - [ ] Log chunk counts per document for comparison.
+    - [ ] Run retrieval tests/spot checks to verify expected +2–5% gain.
+
+    ### Phase 3 – Semantic Chunker Option
+    - [ ] Integrate `AdaptiveChunker` with the embedder at indexing time.
+    - [ ] Gate with config (e.g., `chunker.mode = "semantic"` and optional
+`chunker.semantic_enabled`).
+    - [ ] Test indexing performance/memory on a sample corpus.
+
+    ### Phase 4 – Reranker Integration
+    - [ ] Choose a reranker model (TinyBERT or equivalent) and runtime (candle/Python/etc.).
+    - [ ] After vector search, rerank top-N chunks before returning results.
+    - [ ] Add config flags for reranker (`reranker.enabled`, `model_path`) and log scores.
+
+    ### Phase 5 – Documentation & Monitoring
+    - [ ] Document chunker modes + reranker in the docs (usage + tradeoffs).
+    - [ ] Update installer/config prompts to expose the new options.
+    - [ ] Extend monitor UI to show active chunker mode + reranker status.
+
+Phase 1 – Step 1 is done:
+
+    * Added a typed `ChunkerMode` enum to `src/config.rs` plus a `chunker_mode` field on
+`ApiConfig`, populated from a new `CHUNKER_MODE` environment variable (defaults to `"fixed"`).
+    * Extended `.env.example` with a commented `CHUNKER_MODE` line documenting the available options
+ (`fixed`, `lightweight`, `semantic`).
+
+**Test environment parsing**
+
+
+        * Set the env var and run the binary with `RUST_LOG=debug` so you can see the config in
+logs:    CHUNKER_MODE=semantic RUST_LOG=debug cargo run --bin ag
+
+        * Add a temporary log (or use an existing debug log) that prints `config.chunker_mode` when
+the app starts. You should see it respect whatever value you set (`fixed`, `lightweight`,
+`semantic`), falling back to `fixed` if unset.
+
+Once wePhase 1 Step 2 is complete. Summary:
+
+    * Introduced a chunker factory (`src/memory/chunker_factory.rs`) that exposes a simple `Chunker`
+ trait plus three implementations: the existing fixed splitter, a lightweight structural splitter,
+and a semantic wrapper using the adaptive chunker.
+    * Added a `default_chunker()` helper and updated all indexing entry points
+(`index_all_documents`, `index_file`, API endpoints, background indexers, retriever reindex) to
+obtain a chunker instance and pass it down.
+    * Kept the default mode as the fixed chunker (we’ll hook up `CHUNKER_MODE` in a future step) but
+ the factory makes swapping trivial.
+    * Ran `cargo check` to confirm everything compiles (only existing warnings remain).
+
+This sets the stage for wiring the config flag into the factory and later switching
+between lightweight/semantic modes. Let me know when you’re ready for Step 3 or any
+tweaks.
+ wire the chunker factory (Phase 1 Step 2), there’ll be functional behavior to
+test (e.g., different chunkers actually run). For now, it’s enough to confirm the
+config loads without errors and the enum reflects the env value.
+
+         Compiling ag v13.1.2...
+
+Phase 1, Step 3 – Complete
+
+I finished integrating the configuration-driven chunker selection so the actual chunker
+used at indexing time now comes from the CHUNKER_MODE setting.
+
+### What’s in place now
+
+    1. **`ChunkerMode` config** (from Step 1) is read from `CHUNKER_MODE` in the environment,
+defaulting to `"fixed"` if unset.
+    2. **Chunker factory** (from Step 2) defines `Fixed`, `Lightweight`, and `Semantic` chunkers and
+ exposes a `Chunker` trait.
+    3. **New Step:** all indexing entry points call a central `default_chunker(config.chunker_mode)`
+ helper so the runtime chunker matches the configured mode:
+        * `/reindex` and `/reindex/async` handlers receive the `ApiConfig` and build the appropriate
+ chunker.
+
+        * Startup/background indexing in `main.rs` uses the configured mode.
+
+        * Retriever atomic reindex path defaults to the fixed chunker (to avoid extra dependencies
+during temp builds).
+
+### How to test it
+
+    * Set `CHUNKER_MODE` to `fixed`, `lightweight`, or `semantic` in your environment or `.env`,
+then run `cargo check` or start the server. Indexing should now use the requested chunker
+implementation everywhere.
+    * You can temporarily instrument the logging around `default_chunker` to confirm the selected
+mode is used.
+
+Let me know when you want to move on to Phase 2 (actually wiring the lightweight
+chunker into the factory) or start hooking up the semantic chunker and reranker phases.
+
+Phase 2 Step 2 completed:
+
+    * The lightweight chunker path now logs metrics for every indexed file—chunk count, estimated
+tokens, chunking duration, and the configured mode—so we can compare behavior across modes.
+    * `index_all_documents` and `index_file` now receive the `ChunkerMode` enum and pass it through
+wherever chunking happens (API sync reindex, async reindex, background startup indexing, and
+retriever reindex).
+    * Both reindex endpoints and background tasks pass `config.chunker_mode`, ensuring logs reflect
+whichever mode was configured.
+    * Running `cargo check` after `cargo fmt` shows the build is clean.
+
+Next step (Phase 2 Step 3) would typically be to run a few reindex jobs with
+CHUNKER_MODE=lightweight and capture the new logs to verify chunk counts and sizes—or
+wire the semantic chunker once you’re ready. Let me know when you want to proceed.
+
+                                                                          
+                                                                                                    
+Phase 2 Step 3 is about validating the lightweight chunker’s impact. Here’s how you can             
+exercise it now that the wiring and logging are in place:                                           
+                                                                                                    
+--------------------------------------------------------------------------------------              
+                                                                                                    
+### 1. Switch to the lightweight mode                                                               
+
+    export CHUNKER_MODE=lightweight
+    cargo run --bin ag
+
+(or add CHUNKER_MODE=lightweight to your .env).
+
+### 2. Run a reindex (sync or async)
+
+    curl -X POST http://127.0.0.1:3010/reindex
+    # or
+    curl -X POST http://127.0.0.1:3010/reindex/async
+
+### 3. Inspect the logs
+
+Each file processed now emits:
+
+    index_file: file='sample.txt' mode=Lightweight chunks=12 tokens=2815 duration_ms=34
+
+Compare those stats against CHUNKER_MODE=fixed runs to gauge how chunk counts and sizes
+changed.
+
+### 4. Spot‑check retrieval quality
+
+    * Run representative queries via `/search?q=...`.
+    * Note whether results feel more coherent (headings kept intact, fewer mid-paragraph splits).
+    * If you have an evaluation script, run it twice (fixed vs lightweight) and compare
+precision/recall.
+
+### 5. Record observations
+
+Capture chunk counts, total tokens, and any subjective retrieval differences so you can
+decide whether to keep lightweight mode as default
+
+Phase 2 Step 3 is now implemented via a helper script (scripts/compare_chunkers.sh)
+that automates the “fixed vs lightweight” comparison:
+
+    1. **Script overview**
+
+
+        * Iterates over the two modes (`fixed`, `lightweight`), setting `CHUNKER_MODE` before each
+run.
+
+        * Runs `cargo check` (to surface build issues per mode) and then `cargo run` (with
+monitoring enabled so indexing logs appear).
+
+        * Captures the most recent `index_file:` log line from each run, extracting file name, mode,
+ chunk count, token count, and duration.
+
+        * Writes those stats as JSON lines into `chunker_reports/metrics_<timestamp>.jsonl` so you
+can append multiple comparisons over time.
+    2. **Usage**
+
+           ./scripts/compare_chunkers.sh
+
+       Be sure to reindex (or drop in test docs) beforehand so the `index_file:` logs are
+       present; the script expects to see at least one.
+    3. **Next steps**
+
+
+        * Review the generated `chunker_reports/metrics_*.jsonl` to see how the chunk counts differ
+between modes.
+
+        * Extend the script with `semantic` once that path is wired, or feed it more documents for
+richer stats.
+
+Let me know if you’d like enhancements (e.g., automatic reindex invocation instead of
+relying on cargo run, or a small Rust harness rather than a shell script).
+
+To compare both chunker modes using the new helper script:
+
+    1. **Run the comparison script**
+
+           ./scripts/compare_chunkers.sh
+
+       It will:
+
+
+        * Loop through `fixed` and `lightweight` modes.
+
+        * Run `cargo check` + `cargo run` for each.
+
+        * Capture the latest `index_file:` log line and write JSON summaries to
+`chunker_reports/metrics_<timestamp>.jsonl`.
+    2. **Review the results**  Open the generated JSON lines to see per-file chunk
+       counts/tokens/durations for both modes, e.g.:
+
+           {"file":"sample.txt","mode":"Fixed","chunks":14,"tokens":3100,"duration_ms":32}
+           {"file":"sample.txt","mode":"Lightweight","chunks":11,"tokens":3085,"duration_ms":35}
+
+That gives you a quick, repeatable comparison of both modes side-by-side. Let me know
+if you’d also like the semantic mode added once it’s wired, or if you want the script
+to trigger a full curl -X POST /reindex cycle instead of relying on cargo run.
+
+To automate fully (and address your “what’s the diff?” question), I replaced the                 
+earlier cargo run approach with a script-driven /reindex cycle:                                  
+                                                                                                 
+    1. **Added helper binary**: `scripts/compare_chunkers.sh` now compiles a tiny Rust helper    
+       (`chunker_eval`) on the fly. That helper:                                                 
+                                                                                                 
+                                                                                                 
+        * Starts the Actix backend (`./target/debug/ag`) with the current `CHUNKER_MODE`.        
+                                                                                                 
+        * Waits for `/monitoring/health`.                                                        
+                                                                                                 
+        * Calls `curl -X POST http://127.0.0.1:3010/reindex`.                                    
+                                                                                                 
+        * Captures the backend logs, extracts the latest `index_file:` line, and returns it.     
+    2. **Mode loop**: For each mode (`fixed`, `lightweight`), the script:                        
+                                                                                                 
+                                                                                                 
+        * Exports `CHUNKER_MODE=mode`.                                                           
+                                                                                                 
+        * Builds the backend.                                                                    
+                                                                                                 
+        * Runs the helper to start the server, issue `/reindex`, and capture the chunk logs.     
+                                                                                                 
+        * Appends summarized JSON per mode (file, mode, chunk count, tokens, duration) to        
+`chunker_reports/metrics_<timestamp>.jsonl`.                                                     
+    3. **Cleanup**: Ensures background server processes are killed, handles missing              
+       health-check failures, and only relies on `/reindex` rather than `cargo run` log spam.    
+                                                                                                 
+Diff-wise, the key change is the script now uses curl -X POST /reindex via a helper              
+binary instead of relying on cargo run output. It also assures the server reaches a              
+healthy state before issuing the reindex and records results in a timestamped JSONL for          
+easy comparison.                                                                                 
+                                                   
+
+─────────────────────────────────╯                                          
+                                                                                                 
+Here’s how the two approaches differ:                                                            
+                                                                                                 
+### 1. Previous approach (before the change)                                                     
+                                                                                                 
+    * **What it did:** Set `CHUNKER_MODE`, ran `cargo run --bin ag`, and scraped whatever `index_
+file:` log                                                                                       
+lines happened to print during startup/indexing inside that run.                                 
+    * **Implications:** It relied on the developer running `cargo run` out of band (or having log
+s already                                                                                        
+sitting in the dev console). No guarantee that a `/reindex` was triggered or that a full document
+ pass                                                                                            
+occurred; changing modes meant rerunning `cargo run` manually.                                   
+                                                                                                 
+### 2. New approach (after the change)                                                           
+                                                                                                 
+    * **What it does now:** For each mode, the script:                                           
+                                                                                                 
+                                                                                                 
+        1. Builds the backend.
+
+        2. Starts the Actix server in the background.
+
+        3. Waits until `/monitoring/health` is OK.
+
+        4. Calls `curl -X POST http://127.0.0.1:3010/reindex` to do a real reindex via the API.
+
+        5. Shuts the server down and parses the actual production log output (from the run you just
+triggered).
+    * **Why it’s better:** This mirrors how a user or CI job would trigger reindexing in
+      production. You get consistent, mode-specific stats (chunks, tokens, duration) and
+      can append them automatically to a log file—no manual `cargo run` needed, and no
+      risk of missing data because you forgot to trigger `/reindex`.
+
+Here’s the work broken into the requested steps:
+
+  ### Step 3.1x – Adjust similarity threshold plumbing
+
+      * Added `semantic_similarity_threshold` to `ChunkerConfig`, plus a
+  `DEFAULT_SEMANTIC_SIMILARITY_THRESHOLD` constant.
+      * Updated `ChunkerConfig::from_env()` so we can build chunker configs with future
+  overrides, and switched `default_chunker()` to use this builder.
+
+  ### Step 3.1y – Make the threshold configurable
+
+      * Added parsing of `SEMANTIC_SIMILARITY_THRESHOLD` from the environment (clamped between
+  `0.0` and `1.0`) when constructing the chunker config.
+      * Documented the new env var in `.env.example`.
+
+  ### Step 3.1z – Expand semantic chunk metadata/logging
+
+      * Introduced a `ChunkingStats` struct plus a `stats()` hook on the `Chunker` trait.
+      * `SemanticAdaptiveChunker` now tracks per-run metrics (semantic/heading/size flush counts,
+   total segments, rolling similarity averages, etc.) and exposes them via `stats()`.
+      * `index_file` inspects these stats when logging, so semantic reindex runs now emit
+  threshold + boundary details in the `index_file` log line.
+      * Lightweight/fixed chunkers remain unchanged; they simply return `None` for `stats()`.
+
+  ### Tests
+
+
+      * `cargo fmt`
+      * `cargo check`
+
+      Here’s how I’d queue things up from here:
+
+      1. **Phase 4 – Reranker Integration (next in line):**
+
+
+          * Pick the reranker approach (TinyBERT via `candle`, external service, etc.).
+
+          * Add the `reranker.enabled` config plus endpoints/tests.
+
+          * Make sure we log reranker scores so we can instrument them later.
+      2. **Phase 5 – Monitoring & Documentation refresh (after Phase 4):**
+
+
+          * Surface the semantic chunk stats we’re now capturing:
+
+              * expose them via a monitoring endpoint (e.g., extend `/index/info` or add
+  `/monitor/chunking`),
+
+
+              * wire the frontend monitor page to show the threshold and flush counts,
+
+
+              * fold the new env var + behavior into the docs.
+
+          * Run the monitor QA checklist again once the new panels are in place.
+      3. **Optional: semantic stats early-access:**
+
+
+          * If you’d like to see those stats sooner, we could do a small “Phase 3.2” patch that
+  just adds a read-only endpoint returning the stats (without UI work yet). That way you can
+  start collecting telemetry even while Phase 4 is underway.
+
+  Let me know which sequencing you prefer—strict Phase 4 first, or a quick Phase 3.2
+  telemetry drop before we dive into the reranker.
+
+ ### Phase 3.2 Patch – Semantic Chunking Telemetry Endpoint
+
+  What’s new
+
+      1. **Reusable stats storage**
+
+
+          * Added `ChunkingStatsSnapshot` and helpers in `src/monitoring/chunking_stats.rs`.
+
+          * Every call to `index_file` now records a snapshot (filename, mode, chunk counts,
+  duration, plus the semantic metrics if available).
+      2. **Monitoring endpoint**
+
+
+          * New route `GET /monitoring/chunking/latest` returns the most recent snapshot (or a
+  friendly “empty” message if reindex hasn’t run yet).
+
+          * Exposed by registering the handler alongside the existing `/monitoring/*` routes.
+      3. **Telemetry-friendly stats**
+
+
+          * `ChunkingStats` is now `Serialize`, so the JSON payload includes threshold,
+  semantic/heading/size flush counts, total segments, and average similarity.
+
+          * `.env.example` already documents `SEMANTIC_SIMILARITY_THRESHOLD`; no changes needed
+  there for this patch.
+      4. **Safety checks**
+
+
+          * `cargo fmt`
+
+          * `cargo check`
+
+  You can now hit /monitoring/chunking/latest (e.g., via curl) right after a reindex
+  to inspect the semantic chunking behavior without waiting for the frontend/UI work.
+  Let me know if you’d like the endpoint to keep a rolling history instead of just the
+  latest snapshot.
+
+ You asked to keep a rolling history rather than only the latest stats. That’s now in
+  place:
+
+      1. **In-memory history buffer**
+
+
+          * `src/monitoring/chunking_stats.rs` now maintains a bounded `VecDeque` (50 entries by
+  default).
+
+          * Each reindex call pushes a new `ChunkingStatsSnapshot`; older entries fall off
+  FIFO-style.
+      2. **Expanded monitoring API**
+
+
+          * `GET /monitoring/chunking/latest` accepts an optional `limit` query param (reusing
+  `LogsQuery` for simplicity).
+               Example: `/monitoring/chunking/latest?limit=5`
+
+          * Response includes either the last `limit` snapshots (latest first) or an “empty”
+  status if we haven’t recorded any.
+      3. **Trait & logging updates**
+
+
+          * `ChunkingStats` is now `Serialize`, so snapshots can be serialized directly.
+
+          * `index_file` still logs the same info, but it now records every run into the shared
+  buffer (even when no semantic stats are available).
+      4. **Housekeeping**
+
+
+          * `cargo fmt`
+
+          * `cargo check`
+
+  So now you can query the endpoint to inspect the last N chunking runs, which should
+  make it easier to spot trends even before we wire things into the frontend
+  dashboards. Let me know if you’d like the buffer size or schema tweaked.
+
+  A couple of reasons you might want to tweak it:
+
+      1. **Buffer size (currently 50)**
+
+
+          * *Why shrink it?* If you’re memory-conscious or only care about the most recent
+  handful of runs, trimming to, say, 10 keeps the snapshot list lightweight.
+
+          * *Why grow it?* If you run long indexing batches overnight and want to review the
+  entire series the next morning, bumping it to 200 or 500 would retain more history for
+  comparison.
+      2. **Schema contents**
+
+
+          * *Add more detail:* If you plan to chart this later, you might want separate fields
+  for average similarity, flush ratios, or even per-document tags so you can correlate metrics to
+   document type.
+
+          * *Reduce detail:* If you only care about high-level metrics (e.g., chunk count +
+  threshold), you could remove the heavy stats block to keep responses small when embedding them
+  into dashboards.
+
+  So “liking” those tweaks really just depends on how you intend to consume the
+  data—whether it’s human eyeballing via curl, feeding a dashboard, or archiving for
+  later analysis. If you’d rather keep it exactly as-is for now, that’s also perfectly
+  fine.
+
+### Phase 3.2 – Flex knobs for chunking history & schema discussion                            
+                                                                                                 
+  You asked for:                                                                                 
+                                                                                                 
+      1. **On-demand buffer sizing** – so you can grow/shrink the history as needed.             
+      2. **Insight into schema/perf** – to understand the tradeoffs when adding more detail.     
+                                                                                                 
+  #### 1) Runtime-adjustable history                                                             
+                                                                                                 
+      * `src/monitoring/chunking_stats.rs` keeps the snapshots in a `VecDeque`.                  
+      * New helper `set_chunking_history_capacity(new_cap)` (bounded to 1–1000) lets you change  
+  how many snapshots are retained.                                                               
+      * The monitoring endpoint `/monitoring/chunking/latest` now accepts:                       
+          * `limit` – how many entries to return (default 10, capped by current capacity)        
+                                                                                                 
+          * `capacity` – optional; when provided, changes the buffer size and returns the applied
+   value.                                                                                        
+                                                                                                 
+  Examples:                                                                                      
+                                                                                                 
+      # Just fetch the last 5                                                                    
+      curl "http://localhost:3010/monitoring/chunking/latest?limit=5"                            
+                                                                                                 
+      # Increase history to 200 snapshots                                                        
+      curl "http://localhost:3010/monitoring/chunking/latest?capacity=200"                       
+
+  This means you can leave it small day-to-day, but crank it up temporarily when you
+  want a longer record.
+
+  #### 2) Schema detail vs performance
+
+  Right now each snapshot stores:
+
+      * file name, mode, chunks, tokens, duration, timestamp, and the optional semantic stats
+  block (`semantic_threshold`, flush counts, total segments, avg similarity).
+
+Storage/CPU impact is minimal:
+
+      * We’re talking about at most 1000 entries (default 50). Each entry is a small struct
+  stored in-memory only.
+      * Serialization happens only when you call the endpoint.
+      * Adjusting schema (adding fields) doesn’t affect runtime chunking cost; we’re just
+  collecting data we already computed during the chunker run.
+
+  So the decision to add/remove detail is mostly about response payload weight and
+  downstream consumption. If you know the frontend/monitoring stack will only use a
+  subset, we can trim fields. If you’d like to add more (e.g., document tags, flush
+  ratios), that’s also cheap as long as we already have the numbers during chunking.
+
+persist the snapshots somewhere (e.g., log file, metrics) what would be the most logical choice
+                                                                                                 
+                                                                                                 
+Qodo:                                                                                            
+  Here’s how I’d weigh the options:                                                              
+                                                                                                 
+  ### 1. Log file (structured logging)                                                           
+                                                                                                 
+      * **Pros:**                                                                                
+          * Easiest to implement (just emit a structured `info!` with the snapshot).             
+                                                                                                 
+          * Automatically indexed by whatever log aggregator you already use (Loki, ELK, etc.).  
+                                                                                                 
+          * Historical trail persists across restarts.                                           
+      * **Cons:**                                                                                
+          * Harder to query programmatically unless you already have log analytics in place.     
+                                                                                                 
+  When to prefer: You mainly want the data for forensic / offline analysis (“What                
+  happened last night?”) and already have log retention.                                         
+                                                                                                 
+  -----------------------------------------------------------------------------------            
+                                                                                                 
+  ### 2. Metrics (Prometheus/Grafana)                                                            
+                                                                                                 
+      * **Pros:**                                                                                
+          * Great for dashboards, alerting, and trend analysis (e.g., semantic flush count as a  
+  gauge or counter).                                                                             
+                                                                                                 
+          * You can plot thresholds/similarity over time easily.                                 
+      * **Cons:**
+          * Metrics are best for aggregate values, not per-file or per-run metadata.
+
+          * Storing every snapshot as a metric label can explode cardinality (stress on
+  Prometheus) if filenames vary a lot.
+
+  When to prefer: You only need high-level numeric trends (averages, counts), not the
+  full snapshot payload. 
+
+  ### 3. Database / persistent store (new table/file)
+
+      * **Pros:**
+          * Structured querying, ability to join with other data, long-term history.
+
+          * Doesn’t abuse your log/metrics pipeline.
+      * **Cons:**
+          * Most work: you’d need schema, retention policy, read API, etc.
+
+  When to prefer: You foresee building reports that slice/dice per-document stats, or
+  need auditability beyond logs.
+
+  -----------------------------------------------------------------------------------
+
+  ### Recommendation
+
+  Given the current use case (just wanting an adjustable history for inspection),
+  logging every snapshot is the most logical first step: minimal code, no new
+  infrastructure, survives restarts. If you later find yourself wanting to plot
+  trends, add a handful of targeted Prometheus gauges (e.g., semantic_flushes_total)
+  rather than stuffing full snapshots into metrics.
+
+  If you know you’ll eventually need rich historical queries (e.g., “show me all runs
+  for doc X last month”), then planning a lightweight persistent store might be worth
+  it—but that’s a larger change.
+
+Here’s a two-part plan:
+
+  ### V — Flexible payload schema
+
+      1. **Snapshot field toggles:** add query params like `fields=basic|full` so
+  `/monitoring/chunking/latest?fields=basic` strips out the detailed stats. Default to `full`.
+      2. **“Compact” mode:** keep a minimal struct (filename, mode, duration) alongside the rich
+  snapshot; return whichever the caller requests.
+      3. **Middleware filter:** allow a JSON body or config file that specifies which fields to
+  include/exclude—useful if a frontend only needs certain metrics.
+
+  (These steps keep the history data untouched but let consumers opt into lighter
+  responses.)
+
+  ### W — Log every snapshot
+
+      * Emit a structured `info!` (e.g., `chunking_snapshot` target) whenever we record a
+  snapshot. That way Loki/ELK retains the full data even if the in-memory buffer wraps.
+      * Logs become the ground truth archive; the API just surfaces a rolling cache.
+
+  Best next move: yes—start with W. Logging gives you persistence immediately, and we
+  can layer the flexible response (V) on top once we know what consumers need.

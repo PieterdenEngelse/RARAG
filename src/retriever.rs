@@ -241,7 +241,13 @@ pub async fn reindex_atomic(
     let _ = tmp_ret.begin_batch();
     info!("Reindex: start indexing upload_dir={}", upload_dir);
     if let Err(e) = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-        crate::index::index_all_documents(&mut tmp_ret, upload_dir)
+        let chunker = crate::index::default_chunker(crate::config::ChunkerMode::Fixed);
+        crate::index::index_all_documents(
+            &mut tmp_ret,
+            upload_dir,
+            crate::config::ChunkerMode::Fixed,
+            chunker.as_ref(),
+        )
     })) {
         return Err(RetrieverError::IndexError(format!(
             "index_all_documents panicked: {:?}",
@@ -249,8 +255,14 @@ pub async fn reindex_atomic(
         )));
     }
     // If not panicked, call again to get Result and handle error
-    crate::index::index_all_documents(&mut tmp_ret, upload_dir)
-        .map_err(|e| RetrieverError::IndexError(e))?;
+    let chunker = crate::index::default_chunker(crate::config::ChunkerMode::Fixed);
+    crate::index::index_all_documents(
+        &mut tmp_ret,
+        upload_dir,
+        crate::config::ChunkerMode::Fixed,
+        chunker.as_ref(),
+    )
+    .map_err(|e| RetrieverError::IndexError(e))?;
     info!("Reindex: indexing completed");
     let _ = tmp_ret.end_batch();
 

@@ -1,6 +1,33 @@
 use crate::path_manager::PathManager;
 use std::env;
 
+#[derive(Debug, Clone, Copy)]
+pub enum ChunkerMode {
+    Fixed,
+    Lightweight,
+    Semantic,
+}
+
+impl ChunkerMode {
+    pub fn from_env() -> Self {
+        let raw = env::var("CHUNKER_MODE").unwrap_or_else(|_| "fixed".to_string());
+        raw.parse().unwrap_or(ChunkerMode::Fixed)
+    }
+}
+
+impl std::str::FromStr for ChunkerMode {
+    type Err = String;
+
+    fn from_str(value: &str) -> Result<Self, Self::Err> {
+        match value.to_lowercase().as_str() {
+            "fixed" => Ok(ChunkerMode::Fixed),
+            "lightweight" => Ok(ChunkerMode::Lightweight),
+            "semantic" => Ok(ChunkerMode::Semantic),
+            other => Err(format!("unknown chunker mode: {}", other)),
+        }
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct ApiConfig {
     // Network
@@ -21,6 +48,9 @@ pub struct ApiConfig {
     pub rate_limit_upload_burst: Option<u32>,
     pub rate_limit_lru_capacity: usize,
 
+    // Chunker selection
+    pub chunker_mode: ChunkerMode,
+
     // Path Management
     pub path_manager: PathManager,
 
@@ -28,6 +58,9 @@ pub struct ApiConfig {
     pub redis_enabled: bool,
     pub redis_url: Option<String>,
     pub redis_ttl: u64,
+
+    // Chunking snapshot logging
+    pub chunking_log_enabled: bool,
 }
 
 impl ApiConfig {
@@ -90,6 +123,9 @@ impl ApiConfig {
             .parse()
             .unwrap_or(1024);
 
+        // Chunker selection
+        let chunker_mode = ChunkerMode::from_env();
+
         // Path Management
         let path_manager = PathManager::new().expect("Failed to initialize PathManager");
 
@@ -104,6 +140,10 @@ impl ApiConfig {
             .unwrap_or_else(|_| "3600".to_string())
             .parse()
             .unwrap_or(3600);
+
+        let chunking_log_enabled = env::var("CHUNKING_SNAPSHOT_LOGGING")
+            .map(|v| v.to_lowercase() != "false" && v != "0")
+            .unwrap_or(true);
 
         Self {
             host,
@@ -120,10 +160,12 @@ impl ApiConfig {
             rate_limit_upload_qps,
             rate_limit_upload_burst,
             rate_limit_lru_capacity,
+            chunker_mode,
             path_manager,
             redis_enabled,
             redis_url,
             redis_ttl,
+            chunking_log_enabled,
         }
     }
 

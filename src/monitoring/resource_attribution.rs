@@ -119,6 +119,7 @@ pub static TRACING_CPU_OVERHEAD_PERCENT: Lazy<Gauge> = Lazy::new(|| {
 
 /// Process statistics from /proc/self/stat
 #[derive(Debug, Default)]
+#[allow(dead_code)]
 struct ProcessStats {
     /// User mode CPU time (jiffies)
     utime: u64,
@@ -151,6 +152,7 @@ impl ProcessStats {
     }
 
     /// Get RSS in bytes (assuming 4KB pages)
+    #[allow(dead_code)]
     fn rss_bytes(&self) -> u64 {
         self.rss_pages * 4096
     }

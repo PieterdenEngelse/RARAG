@@ -2,6 +2,7 @@
 
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
+use std::env;
 use uuid::Uuid;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -33,12 +34,15 @@ pub enum SourceType {
     Code,
 }
 
+pub const DEFAULT_SEMANTIC_SIMILARITY_THRESHOLD: f32 = 0.78;
+
 #[derive(Debug, Clone)]
 pub struct ChunkerConfig {
     pub target_size: usize, // 512 tokens
     pub min_size: usize,    // 256 tokens (allow smaller for semantic boundaries)
     pub max_size: usize,    // 768 tokens (allow larger to avoid splitting mid-concept)
     pub overlap: usize,     // 75 tokens (middle of 50-100 range)
+    pub semantic_similarity_threshold: f32,
 }
 
 impl Default for ChunkerConfig {
@@ -48,7 +52,21 @@ impl Default for ChunkerConfig {
             min_size: 256,
             max_size: 768,
             overlap: 75,
+            semantic_similarity_threshold: DEFAULT_SEMANTIC_SIMILARITY_THRESHOLD,
         }
+    }
+}
+
+impl ChunkerConfig {
+    pub fn from_env() -> Self {
+        let mut config = Self::default();
+        if let Ok(raw) = env::var("SEMANTIC_SIMILARITY_THRESHOLD") {
+            if let Ok(value) = raw.parse::<f32>() {
+                // Clamp between 0 and 1 to avoid invalid cosine thresholds
+                config.semantic_similarity_threshold = value.clamp(0.0, 1.0);
+            }
+        }
+        config
     }
 }
 

@@ -21,7 +21,7 @@ pub fn Panel(props: PanelProps) -> Element {
                     }
                 }
             }
-            div { class: "text-gray-100 text-sm space-y-2", {props.children} }
+            div { class: "text-gray-100 text-xs space-y-2", {props.children} }
         }
     }
 }

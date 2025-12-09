@@ -11,6 +11,7 @@
 //! - Requires RUST_LOG environment variable
 //! - Requires MONITORING_ENABLED=true environment variable
 pub mod alerting_hooks;
+pub mod chunking_stats;
 pub mod config;
 pub mod config_phase15;
 pub mod distributed_tracing;
@@ -38,6 +39,11 @@ pub use crate::monitoring::metrics::{
     VECTORS_TOTAL,
 };
 pub use alerting_hooks::{AlertingHooksConfig, ReindexCompletionEvent};
+pub use chunking_stats::{
+    chunking_logging_enabled, chunking_snapshot_history, latest_chunking_snapshot,
+    record_chunking_snapshot, set_chunking_history_capacity, set_chunking_logging_enabled,
+    ChunkingStatsSnapshot,
+};
 pub use config::MonitoringConfig;
 pub use health::HealthStatus;
 pub use histogram_config::HistogramBuckets;

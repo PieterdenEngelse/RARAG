@@ -72,4 +72,113 @@ or ticket so it’s easy to share with teammates.
 Once you’ve gathered both the cache snapshot and the trace/metric context, you’ll have              
 the “paired” evidence the checklist is nudging you toward. 
 
+2. Message + JSON
+
+      * Keep the current JSON snapshot, but add a short textual `message` and maybe a few key
+  fields (file, mode) as separate tracing fields.
+      * Example log call:    tracing::info!(
+                target = "chunking_snapshot",
+                message = "chunking snapshot recorded",
+                file = %snapshot.file,
+                mode = %snapshot.chunker_mode,
+                snapshot = %serde_json::to_string(&snapshot).unwrap_or_default(),
+            );
+      * Benefit: when tailing logs you’ll immediately see the message and filename, but the full
+  JSON is still there if you need it.
+
+  ### 3. Log-level filtering
+
+      * Because we’re using a dedicated target (`chunking_snapshot`), you can control it via
+  `RUST_LOG`.
+          * To keep it at `info` (default): `RUST_LOG=info,chunking_snapshot=info`
+
+          * To silence it: `RUST_LOG=info,chunking_snapshot=warn` (or exclude it altogether)
+
+          * To see it only when debugging: set our log call to `debug!` and run with
+  `chunking_snapshot=debug`.
+      * If you want a runtime toggle, we could add an env var like `CHUNKING_SNAPSHOT_LOG_LEVEL`,
+   but often using `RUST_LOG` is enough.
+
+  Would you like me to implement the message+JSON logging now, or are you just
+  evaluating the approach?
+
+### User-controlled logging (Step 3 enhancement) ✅
+
+  To let end users toggle snapshot logging at runtime:
+
+      1. **Config & Env**
+
+
+          * Added `chunking_log_enabled` to `ApiConfig` and documented
+  `CHUNKING_SNAPSHOT_LOGGING` in `.env.example`.
+
+          * Default is `true`; set the env var to `false`/`0` to disable logging.
+      2. **Runtime toggle**
+
+
+          * `main.rs` now calls
+  `ag::monitoring::set_chunking_logging_enabled(config.chunking_log_enabled)` during startup.
+
+          * `record_chunking_snapshot` checks a shared atomic flag before emitting the log. When
+  logging is enabled, we still write the JSON snapshot to the `chunking_snapshot` target; when
+  disabled, only the in-memory buffer is updated.
+      3. **Public API**
+
+
+          * Exposed `set_chunking_logging_enabled` from the monitoring module so other subsystems
+   (or future admin endpoints) can flip it if needed.
+
+  Tests: cargo fmt, cargo check.
+
+  Now operators can control logging without code changes—just set the env var (or call
+  the helper if you later expose it via an admin API). Let me know if you’d also like
+  a /monitoring/chunking/logging?enabled=false endpoint for hot toggles.
+
+
+Now operators can control logging without code changes—just set the env var (or call
+  the helper if you later expose it via an admin API). Let me know if you’d also like
+  a /monitoring/chunking/logging?enabled=false endpoint for hot toggles.
+
+### Hot-toggle endpoint added for chunking snapshot logging ✅                                 
+                                                                                                 
+  You liked the idea of letting operators flip logging without restarts, so we wired             
+  it up:                                                                                         
+
+      1. **New endpoint**
+
+
+          * `GET /monitoring/chunking/logging`
+
+              * `?enabled=true` or `?enabled=false` updates the runtime flag immediately.
+
+
+              * No query param returns the current status.
+
+
+              * Example:    curl
+  "http://localhost:3010/monitoring/chunking/logging?enabled=false"
+                         curl "http://localhost:3010/monitoring/chunking/logging"
+      2. **Runtime state**
+
+
+          * `set_chunking_logging_enabled` stores the flag in an atomic `LOGGING_ENABLED`.
+
+          * Added `chunking_logging_enabled()` to report the current setting.
+      3. **Config integration**
+
+
+          * Startup still honors `CHUNKING_SNAPSHOT_LOGGING` (default true) via `ApiConfig` →
+  `main.rs`.
+      4. **Docs**
+
+
+          * `.env.example` now lists the env var for clarity.
+
+  Tests: cargo fmt, cargo check.
+
+  Now operators can script or manually toggle snapshot logging on a live system
+  without touching environment variables or restarting the service. Let me know if
+  you’d like the endpoint to require auth or move under a different path.
+
+ Next up per the roadmap: Phase 4 Task 3.3 – integrate the reranker (pending start).
 

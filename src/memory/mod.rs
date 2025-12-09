@@ -2,6 +2,7 @@
 
 pub mod agent;
 pub mod chunker;
+pub mod chunker_factory;
 pub mod decision_engine;
 pub mod llm_provider;
 pub mod persistence;

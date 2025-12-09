@@ -86,6 +86,32 @@ pub struct IndexInfoResponse {
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct ChunkingLoggingResponse {
+    pub status: String,
+    pub request_id: String,
+    pub logging_enabled: bool,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct ReindexAsyncResponse {
+    pub status: String,
+    pub job_id: String,
+    pub request_id: String,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct ReindexStatusResponse {
+    pub status: String,
+    pub job_id: String,
+    pub started_at: Option<String>,
+    pub completed_at: Option<String>,
+    pub vectors_indexed: Option<usize>,
+    pub mappings_indexed: Option<usize>,
+    pub error: Option<String>,
+    pub request_id: String,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct CacheLayerStats {
     pub enabled: bool,
     pub total_searches: u64,
@@ -244,6 +270,30 @@ pub async fn reindex() -> Result<serde_json::Value, String> {
         .map_err(|e| format!("Failed to parse response: {}", e))
 }
 
+pub async fn reindex_async() -> Result<ReindexAsyncResponse, String> {
+    let url = format!("{}/reindex/async", API_BASE_URL);
+
+    gloo_net::http::Request::post(&url)
+        .send()
+        .await
+        .map_err(|e| format!("Request failed: {}", e))?
+        .json()
+        .await
+        .map_err(|e| format!("Failed to parse response: {}", e))
+}
+
+pub async fn fetch_reindex_status(job_id: &str) -> Result<ReindexStatusResponse, String> {
+    let url = format!("{}/reindex/status/{}", API_BASE_URL, job_id);
+
+    gloo_net::http::Request::get(&url)
+        .send()
+        .await
+        .map_err(|e| format!("Request failed: {}", e))?
+        .json()
+        .await
+        .map_err(|e| format!("Failed to parse response: {}", e))
+}
+
 /// Fetch request metrics snapshot for the Monitor UI
 pub async fn fetch_requests_snapshot() -> Result<RequestsSnapshot, String> {
     let url = format!("{}/monitoring/ui/requests", API_BASE_URL);
@@ -259,15 +309,16 @@ pub async fn fetch_requests_snapshot() -> Result<RequestsSnapshot, String> {
 
 /// Fetch index info for the monitor page
 pub async fn fetch_index_info() -> Result<IndexInfoResponse, String> {
-    let url = format!("{}/index/info", API_BASE_URL);
+    fetch_json::<IndexInfoResponse>("/index/info").await
+}
 
-    gloo_net::http::Request::get(&url)
-        .send()
-        .await
-        .map_err(|e| format!("Request failed: {}", e))?
-        .json()
-        .await
-        .map_err(|e| format!("Failed to parse response: {}", e))
+pub async fn get_chunking_logging() -> Result<ChunkingLoggingResponse, String> {
+    fetch_json::<ChunkingLoggingResponse>("/monitoring/chunking/logging").await
+}
+
+pub async fn set_chunking_logging(enabled: bool) -> Result<ChunkingLoggingResponse, String> {
+    let url = format!("/monitoring/chunking/logging?enabled={}", enabled);
+    fetch_json::<ChunkingLoggingResponse>(&url).await
 }
 
 pub async fn fetch_cache_info() -> Result<CacheInfoResponse, String> {
@@ -307,4 +358,34 @@ pub async fn fetch_recent_logs(limit: usize) -> Result<LogsResponse, String> {
         .json()
         .await
         .map_err(|e| format!("Failed to parse response: {}", e))
+}
+
+async fn fetch_json<T>(path: &str) -> Result<T, String>
+where
+    T: for<'de> serde::Deserialize<'de>,
+{
+    let url = format!("{}{}", API_BASE_URL, path);
+    let response = gloo_net::http::Request::get(&url)
+        .send()
+        .await
+        .map_err(|e| format!("Request failed: {}", e))?;
+
+    let status = response.status();
+    if !(200..=299).contains(&status) {
+        let body = match response.text().await {
+            Ok(body) => body.trim().to_string(),
+            Err(_) => String::new(),
+        };
+        let detail = if body.is_empty() {
+            "(empty response)".to_string()
+        } else {
+            body
+        };
+        return Err(format!("HTTP {} {}", status, detail));
+    }
+
+    response
+        .json::<T>()
+        .await
+        .map_err(|e| format!("Failed to parse JSON: {}", e))
 }

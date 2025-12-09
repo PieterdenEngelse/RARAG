@@ -77,6 +77,7 @@ async fn main() -> std::io::Result<()> {
     debug!("Loading configuration with PathManager...");
 
     let config = ApiConfig::from_env();
+    ag::monitoring::set_chunking_logging_enabled(config.chunking_log_enabled);
 
     let pm = &config.path_manager;
     info!("🏠 AG_HOME: {}", pm.base_dir().display());
@@ -193,7 +194,13 @@ async fn main() -> std::io::Result<()> {
             match retriever_clone.lock() {
                 Ok(mut ret) => {
                     // Call indexing synchronously within the async task
-                    if let Err(e) = index::index_all_documents(&mut *ret, &upload_dir) {
+                    let chunker = index::default_chunker(config.chunker_mode);
+                    if let Err(e) = index::index_all_documents(
+                        &mut *ret,
+                        &upload_dir,
+                        config.chunker_mode,
+                        chunker.as_ref(),
+                    ) {
                         error!("Background indexing failed: {}", e);
                     } else {
                         let duration_ms = indexing_start.elapsed().as_millis() as u64;
