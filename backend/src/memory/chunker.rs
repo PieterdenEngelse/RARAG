@@ -34,39 +34,107 @@ pub enum SourceType {
     Code,
 }
 
+// Default values optimized for small local models like phi (2K context)
+pub const DEFAULT_TARGET_SIZE: usize = 384;      // Target tokens per chunk
+pub const DEFAULT_MIN_SIZE: usize = 192;         // Minimum tokens
+pub const DEFAULT_MAX_SIZE: usize = 512;         // Maximum tokens  
+pub const DEFAULT_OVERLAP: usize = 50;           // Overlap tokens
 pub const DEFAULT_SEMANTIC_SIMILARITY_THRESHOLD: f32 = 0.78;
 
 #[derive(Debug, Clone)]
 pub struct ChunkerConfig {
-    pub target_size: usize, // 512 tokens
-    pub min_size: usize,    // 256 tokens (allow smaller for semantic boundaries)
-    pub max_size: usize,    // 768 tokens (allow larger to avoid splitting mid-concept)
-    pub overlap: usize,     // 75 tokens (middle of 50-100 range)
+    pub target_size: usize, // Target tokens per chunk
+    pub min_size: usize,    // Minimum tokens (allow smaller for semantic boundaries)
+    pub max_size: usize,    // Maximum tokens (avoid splitting mid-concept)
+    pub overlap: usize,     // Overlap tokens between chunks
     pub semantic_similarity_threshold: f32,
 }
 
 impl Default for ChunkerConfig {
     fn default() -> Self {
         Self {
-            target_size: 512,
-            min_size: 256,
-            max_size: 768,
-            overlap: 75,
+            target_size: DEFAULT_TARGET_SIZE,
+            min_size: DEFAULT_MIN_SIZE,
+            max_size: DEFAULT_MAX_SIZE,
+            overlap: DEFAULT_OVERLAP,
             semantic_similarity_threshold: DEFAULT_SEMANTIC_SIMILARITY_THRESHOLD,
         }
     }
 }
 
 impl ChunkerConfig {
+    /// Load configuration from environment variables with sensible defaults
+    /// 
+    /// Environment variables:
+    /// - CHUNK_TARGET_SIZE: Target tokens per chunk (default: 384)
+    /// - CHUNK_MIN_SIZE: Minimum tokens per chunk (default: 192)
+    /// - CHUNK_MAX_SIZE: Maximum tokens per chunk (default: 512)
+    /// - CHUNK_OVERLAP: Overlap tokens between chunks (default: 50)
+    /// - SEMANTIC_SIMILARITY_THRESHOLD: Threshold for semantic chunking (default: 0.78)
     pub fn from_env() -> Self {
-        let mut config = Self::default();
-        if let Ok(raw) = env::var("SEMANTIC_SIMILARITY_THRESHOLD") {
-            if let Ok(value) = raw.parse::<f32>() {
-                // Clamp between 0 and 1 to avoid invalid cosine thresholds
-                config.semantic_similarity_threshold = value.clamp(0.0, 1.0);
-            }
+        let target_size = env::var("CHUNK_TARGET_SIZE")
+            .ok()
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(DEFAULT_TARGET_SIZE);
+        
+        let min_size = env::var("CHUNK_MIN_SIZE")
+            .ok()
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(DEFAULT_MIN_SIZE);
+        
+        let max_size = env::var("CHUNK_MAX_SIZE")
+            .ok()
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(DEFAULT_MAX_SIZE);
+        
+        let overlap = env::var("CHUNK_OVERLAP")
+            .ok()
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(DEFAULT_OVERLAP);
+        
+        let semantic_similarity_threshold = env::var("SEMANTIC_SIMILARITY_THRESHOLD")
+            .ok()
+            .and_then(|v| v.parse().ok())
+            .map(|v: f32| v.clamp(0.0, 1.0))
+            .unwrap_or(DEFAULT_SEMANTIC_SIMILARITY_THRESHOLD);
+        
+        Self {
+            target_size,
+            min_size,
+            max_size,
+            overlap,
+            semantic_similarity_threshold,
         }
-        config
+    }
+    
+    /// Create config optimized for different model sizes
+    pub fn for_model(model_context_size: usize) -> Self {
+        match model_context_size {
+            // Small models (phi, tinyllama) - 2K context
+            0..=2048 => Self {
+                target_size: 384,
+                min_size: 192,
+                max_size: 512,
+                overlap: 50,
+                semantic_similarity_threshold: DEFAULT_SEMANTIC_SIMILARITY_THRESHOLD,
+            },
+            // Medium models (llama2-7b) - 4K context
+            2049..=4096 => Self {
+                target_size: 512,
+                min_size: 256,
+                max_size: 768,
+                overlap: 75,
+                semantic_similarity_threshold: DEFAULT_SEMANTIC_SIMILARITY_THRESHOLD,
+            },
+            // Large models (llama3, mistral) - 8K+ context
+            _ => Self {
+                target_size: 768,
+                min_size: 384,
+                max_size: 1024,
+                overlap: 100,
+                semantic_similarity_threshold: DEFAULT_SEMANTIC_SIMILARITY_THRESHOLD,
+            },
+        }
     }
 }
 

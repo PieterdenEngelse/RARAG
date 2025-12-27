@@ -112,6 +112,34 @@ pub struct ReindexStatusResponse {
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct ChunkerConfigSnapshot {
+    pub target_size: usize,
+    pub min_size: usize,
+    pub max_size: usize,
+    pub overlap: usize,
+    pub semantic_similarity_threshold: f32,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct ChunkCommitResponse {
+    pub status: String,
+    pub message: String,
+    pub request_id: String,
+    pub chunker_config: ChunkerConfigSnapshot,
+    pub reindex_status: String,
+    pub reindex_job_id: Option<String>,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct ChunkCommitRequest {
+    pub target_size: usize,
+    pub min_size: usize,
+    pub max_size: usize,
+    pub overlap: usize,
+    pub semantic_similarity_threshold: Option<f32>,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct CacheLayerStats {
     pub enabled: bool,
     pub total_searches: u64,
@@ -207,7 +235,7 @@ pub struct LogsResponse {
 
 /// Check backend health
 pub async fn health_check() -> Result<HealthResponse, String> {
-    let url = format!("{}/health", API_BASE_URL);
+    let url = format!("{}/monitoring/health", API_BASE_URL);
 
     gloo_net::http::Request::get(&url)
         .send()
@@ -274,6 +302,23 @@ pub async fn reindex_async() -> Result<ReindexAsyncResponse, String> {
     let url = format!("{}/reindex/async", API_BASE_URL);
 
     gloo_net::http::Request::post(&url)
+        .send()
+        .await
+        .map_err(|e| format!("Request failed: {}", e))?
+        .json()
+        .await
+        .map_err(|e| format!("Failed to parse response: {}", e))
+}
+
+pub async fn commit_chunk_config(payload: &ChunkCommitRequest) -> Result<ChunkCommitResponse, String> {
+    let url = format!("{}/config/chunk_size", API_BASE_URL);
+    gloo_net::http::Request::post(&url)
+        .header("Content-Type", "application/json")
+        .body(
+            serde_json::to_string(payload)
+                .map_err(|e| format!("Failed to serialize payload: {}", e))?,
+        )
+        .map_err(|e| format!("Failed to build request: {}", e))?
         .send()
         .await
         .map_err(|e| format!("Request failed: {}", e))?
@@ -349,12 +394,89 @@ pub async fn fetch_rate_limit_info() -> Result<RateLimitInfoResponse, String> {
         .map_err(|e| format!("Failed to parse response: {}", e))
 }
 
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct SetRateLimitEnabledResponse {
+    pub request_id: String,
+    pub enabled: bool,
+    pub message: String,
+}
+
+pub async fn set_rate_limit_enabled(enabled: bool) -> Result<SetRateLimitEnabledResponse, String> {
+    let url = format!("{}/monitor/rate_limits/enabled", API_BASE_URL);
+    gloo_net::http::Request::post(&url)
+        .header("Content-Type", "application/json")
+        .body(serde_json::json!({ "enabled": enabled }).to_string())
+        .map_err(|e| format!("Failed to create request: {:?}", e))?
+        .send()
+        .await
+        .map_err(|e| format!("Request failed: {}", e))?
+        .json()
+        .await
+        .map_err(|e| format!("Failed to parse response: {}", e))
+}
+
 pub async fn fetch_recent_logs(limit: usize) -> Result<LogsResponse, String> {
     let url = format!("{}/monitor/logs/recent?limit={}", API_BASE_URL, limit);
     gloo_net::http::Request::get(&url)
         .send()
         .await
         .map_err(|e| format!("Request failed: {}", e))?
+        .json()
+        .await
+        .map_err(|e| format!("Failed to parse response: {}", e))
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct UploadResponse {
+    pub status: String,
+    #[serde(default)]
+    pub uploaded_files: Vec<String>,
+    #[serde(default)]
+    pub indexed_files: Vec<String>,
+    #[serde(default)]
+    pub index_errors: Vec<String>,
+}
+
+pub async fn upload_document(filename: &str, data: &[u8]) -> Result<UploadResponse, String> {
+    use gloo_net::http::Request;
+    use js_sys::{Array, Uint8Array};
+    use web_sys::{Blob, BlobPropertyBag, FormData};
+
+    let url = format!("{}/upload", API_BASE_URL);
+
+    // Create a Uint8Array from the data
+    let uint8_array = Uint8Array::new_with_length(data.len() as u32);
+    uint8_array.copy_from(data);
+
+    // Create blob from the array
+    let array = Array::new();
+    array.push(&uint8_array);
+    let mut blob_options = BlobPropertyBag::new();
+    blob_options.type_("application/octet-stream");
+    let blob = Blob::new_with_u8_array_sequence_and_options(&array, &blob_options)
+        .map_err(|_| "Failed to create blob".to_string())?;
+
+    // Create FormData and append the blob with filename
+    let form_data = FormData::new().map_err(|_| "Failed to create FormData".to_string())?;
+    form_data
+        .append_with_blob_and_filename("file", &blob, filename)
+        .map_err(|_| "Failed to append file to FormData".to_string())?;
+
+    // Send the request
+    let response = Request::post(&url)
+        .body(form_data)
+        .map_err(|e| format!("Failed to create request: {:?}", e))?
+        .send()
+        .await
+        .map_err(|e| format!("Request failed: {}", e))?;
+
+    let status = response.status();
+    if !(200..=299).contains(&status) {
+        let body = response.text().await.unwrap_or_default();
+        return Err(format!("HTTP {}: {}", status, body));
+    }
+
+    response
         .json()
         .await
         .map_err(|e| format!("Failed to parse response: {}", e))

@@ -1,6 +1,7 @@
 pub mod path_manager;
 pub mod db {
     pub mod schema_init;
+    pub mod chunk_settings;
 }
 pub mod agent;
 pub mod api;

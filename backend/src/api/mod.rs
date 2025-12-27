@@ -1,7 +1,9 @@
 use crate::agent::{Agent, AgentResponse};
 use crate::agent_memory::{AgentMemory, MemoryItem, MemorySearchResult};
 use crate::config::ApiConfig;
+use crate::db::chunk_settings;
 use crate::index;
+use crate::memory::chunker::ChunkerConfig;
 use crate::monitoring::config::MonitoringConfig;
 use crate::monitoring::metrics;
 use crate::monitoring::rate_limit_middleware::{MatchKind, RateLimitOptions, RouteRule};
@@ -9,7 +11,7 @@ use crate::retriever::Retriever;
 use crate::security::rate_limiter::{RateLimiter, RateLimiterState};
 use actix_cors::Cors;
 use actix_multipart::Multipart;
-use actix_web::{web, App, Error, HttpResponse, HttpServer};
+use actix_web::{http::StatusCode, web, App, Error, HttpResponse, HttpServer};
 use chrono::Utc;
 use futures_util::stream::StreamExt;
 use serde::Serialize;
@@ -184,6 +186,47 @@ struct LoggingQuery {
     enabled: Option<bool>,
 }
 
+#[derive(Debug, serde::Deserialize)]
+struct ChunkConfigCommitRequest {
+    target_size: usize,
+    min_size: usize,
+    max_size: usize,
+    overlap: usize,
+    #[serde(default)]
+    semantic_similarity_threshold: Option<f32>,
+}
+
+#[derive(Debug, Serialize, Clone)]
+struct ChunkerConfigSnapshot {
+    target_size: usize,
+    min_size: usize,
+    max_size: usize,
+    overlap: usize,
+    semantic_similarity_threshold: f32,
+}
+
+impl From<&ChunkerConfig> for ChunkerConfigSnapshot {
+    fn from(cfg: &ChunkerConfig) -> Self {
+        Self {
+            target_size: cfg.target_size,
+            min_size: cfg.min_size,
+            max_size: cfg.max_size,
+            overlap: cfg.overlap,
+            semantic_similarity_threshold: cfg.semantic_similarity_threshold,
+        }
+    }
+}
+
+#[derive(Debug, Serialize)]
+struct ChunkCommitResponse {
+    status: String,
+    message: String,
+    request_id: String,
+    chunker_config: ChunkerConfigSnapshot,
+    reindex_status: String,
+    reindex_job_id: Option<String>,
+}
+
 #[derive(Serialize)]
 struct LogEntry {
     timestamp: Option<String>,
@@ -205,6 +248,28 @@ struct LogsResponse {
 /// Generate a short request ID for correlation
 fn generate_request_id() -> String {
     Uuid::new_v4().to_string()[..8].to_string()
+}
+
+fn validate_chunk_request(req: &ChunkConfigCommitRequest) -> Result<(), String> {
+    if req.min_size == 0 {
+        return Err("min_size must be greater than 0".into());
+    }
+    if req.min_size > req.target_size {
+        return Err("min_size cannot exceed target_size".into());
+    }
+    if req.target_size > req.max_size {
+        return Err("target_size cannot exceed max_size".into());
+    }
+    if req.overlap >= req.target_size {
+        return Err("overlap must be smaller than target_size".into());
+    }
+    if req.max_size == 0 {
+        return Err("max_size must be greater than 0".into());
+    }
+    if req.semantic_similarity_threshold.map_or(false, |v| !(0.0..=1.0).contains(&v)) {
+        return Err("semantic_similarity_threshold must be between 0 and 1".into());
+    }
+    Ok(())
 }
 
 pub async fn health_check() -> Result<HttpResponse, Error> {
@@ -354,6 +419,90 @@ async fn toggle_chunking_logging(query: web::Query<LoggingQuery>) -> Result<Http
     })))
 }
 
+async fn commit_chunk_config(
+    config: web::Data<ApiConfig>,
+    payload: web::Json<ChunkConfigCommitRequest>,
+) -> Result<HttpResponse, Error> {
+    let request_id = generate_request_id();
+    let body = payload.into_inner();
+    if let Err(msg) = validate_chunk_request(&body) {
+        return Ok(HttpResponse::BadRequest().json(json!({
+            "status": "invalid",
+            "message": msg,
+            "request_id": request_id
+        })));
+    }
+
+    let new_cfg = ChunkerConfig {
+        target_size: body.target_size,
+        min_size: body.min_size,
+        max_size: body.max_size,
+        overlap: body.overlap,
+        semantic_similarity_threshold: body
+            .semantic_similarity_threshold
+            .unwrap_or_else(|| chunk_settings::global_config().semantic_similarity_threshold),
+    };
+
+    match chunk_settings::save_chunker_config_default_db(&new_cfg) {
+        Ok(_) => {
+            tracing::info!(
+                request_id = %request_id,
+                target = new_cfg.target_size,
+                min = new_cfg.min_size,
+                max = new_cfg.max_size,
+                overlap = new_cfg.overlap,
+                "Chunk config committed"
+            );
+        }
+        Err(err) => {
+            tracing::error!(
+                request_id = %request_id,
+                error = %err,
+                "Failed to save chunk config"
+            );
+            return Ok(HttpResponse::InternalServerError().json(json!({
+                "status": "error",
+                "message": format!("Failed to save chunk config: {}", err),
+                "request_id": request_id
+            })));
+        }
+    }
+
+    let chunk_snapshot = ChunkerConfigSnapshot::from(&new_cfg);
+
+    match launch_async_reindex_job(config) {
+        Ok(job_id) => Ok(HttpResponse::Accepted().json(ChunkCommitResponse {
+            status: "accepted".into(),
+            message: "Chunk settings saved; reindex started".into(),
+            request_id,
+            chunker_config: chunk_snapshot,
+            reindex_status: "accepted".into(),
+            reindex_job_id: Some(job_id),
+        })),
+        Err((status, message)) => {
+            let http_status = if status == StatusCode::TOO_MANY_REQUESTS {
+                StatusCode::TOO_MANY_REQUESTS
+            } else {
+                StatusCode::INTERNAL_SERVER_ERROR
+            };
+            tracing::warn!(
+                request_id = %request_id,
+                status = %http_status.as_u16(),
+                message = %message,
+                "Chunk commit applied but reindex not started"
+            );
+            Ok(HttpResponse::build(http_status).json(ChunkCommitResponse {
+                status: "saved_pending_reindex".into(),
+                message: format!("Settings saved, but reindex not started: {}", message),
+                request_id,
+                chunker_config: chunk_snapshot,
+                reindex_status: "skipped".into(),
+                reindex_job_id: None,
+            }))
+        }
+    }
+}
+
 async fn get_cache_monitor_info() -> Result<HttpResponse, Error> {
     let request_id = generate_request_id();
     let retriever = match RETRIEVER.get() {
@@ -434,6 +583,40 @@ async fn get_rate_limit_monitor_info(
     Ok(HttpResponse::Ok().json(response))
 }
 
+#[derive(Debug, serde::Deserialize)]
+struct SetRateLimitEnabledRequest {
+    enabled: bool,
+}
+
+#[derive(Debug, Serialize)]
+struct SetRateLimitEnabledResponse {
+    request_id: String,
+    enabled: bool,
+    message: String,
+}
+
+async fn set_rate_limit_enabled(
+    state: web::Data<RateLimitSharedState>,
+    body: web::Json<SetRateLimitEnabledRequest>,
+) -> Result<HttpResponse, Error> {
+    let request_id = generate_request_id();
+    let new_state = state.limiter.set_enabled(body.enabled);
+    
+    let message = if new_state {
+        "Rate limiter enabled".to_string()
+    } else {
+        "Rate limiter disabled".to_string()
+    };
+    
+    tracing::info!("[{}] Rate limiter set to: {}", request_id, new_state);
+    
+    Ok(HttpResponse::Ok().json(SetRateLimitEnabledResponse {
+        request_id,
+        enabled: new_state,
+        message,
+    }))
+}
+
 async fn get_recent_logs(query: web::Query<LogsQuery>) -> Result<HttpResponse, Error> {
     let request_id = generate_request_id();
     let limit = query
@@ -476,7 +659,10 @@ async fn get_recent_logs(query: web::Query<LogsQuery>) -> Result<HttpResponse, E
     Ok(HttpResponse::Ok().json(response))
 }
 
-async fn upload_document_inner(mut payload: Multipart) -> Result<HttpResponse, Error> {
+async fn upload_document_inner(
+    mut payload: Multipart,
+    config: web::Data<ApiConfig>,
+) -> Result<HttpResponse, Error> {
     let request_id = generate_request_id();
     fs::create_dir_all(UPLOAD_DIR).ok();
     let mut uploaded_files = Vec::new();
@@ -494,8 +680,8 @@ async fn upload_document_inner(mut payload: Multipart) -> Result<HttpResponse, E
             .extension()
             .and_then(|s| s.to_str())
             .unwrap_or("");
-        if ext != "txt" && ext != "pdf" {
-            return Ok(HttpResponse::BadRequest().body("Only .txt/.pdf allowed"));
+        if ext != "txt" && ext != "pdf" && ext != "md" {
+            return Ok(HttpResponse::BadRequest().body("Only .txt/.pdf/.md allowed"));
         }
 
         let filepath = format!("{}/{}", UPLOAD_DIR, filename);
@@ -508,10 +694,64 @@ async fn upload_document_inner(mut payload: Multipart) -> Result<HttpResponse, E
         uploaded_files.push(filename);
     }
 
+    let mut indexed_files = Vec::new();
+    let mut index_errors = Vec::new();
+    if !uploaded_files.is_empty() {
+        if is_reindex_in_progress() {
+            index_errors.push(json!({
+                "file": null,
+                "error": "Reindex already in progress; automatic indexing skipped",
+            }));
+        } else if let Some(handle) = RETRIEVER.get() {
+            match handle.lock() {
+                Ok(mut retriever) => {
+                    let chunker = crate::index::default_chunker(config.chunker_mode);
+                    let chunker_ref = chunker.as_ref();
+                    for filename in &uploaded_files {
+                        let path = Path::new(UPLOAD_DIR).join(filename);
+                        match index::index_file(
+                            &mut *retriever,
+                            &path,
+                            config.chunker_mode,
+                            chunker_ref,
+                        ) {
+                            Ok(chunks) => indexed_files.push(json!({
+                                "file": filename,
+                                "chunks_indexed": chunks,
+                            })),
+                            Err(err) => index_errors.push(json!({
+                                "file": filename,
+                                "error": err,
+                            })),
+                        }
+                    }
+                    if let Err(err) = retriever.commit() {
+                        index_errors.push(json!({
+                            "file": null,
+                            "error": format!("commit failed: {}", err),
+                        }));
+                    }
+                }
+                Err(_) => {
+                    index_errors.push(json!({
+                        "file": null,
+                        "error": "Failed to lock retriever for indexing",
+                    }));
+                }
+            }
+        } else {
+            index_errors.push(json!({
+                "file": null,
+                "error": "Retriever not initialized; run /reindex manually",
+            }));
+        }
+    }
+
     Ok(HttpResponse::Ok().json(json!({
         "status": "success",
         "uploaded_files": uploaded_files,
-        "message": "Use /reindex to refresh index",
+        "indexed_files": indexed_files,
+        "index_errors": index_errors,
         "request_id": request_id
     })))
 }
@@ -632,23 +872,20 @@ pub async fn reindex_handler(config: web::Data<ApiConfig>) -> Result<HttpRespons
     }
 }
 
-/// Phase 15: Async reindex endpoint
-pub async fn reindex_async_handler(config: web::Data<ApiConfig>) -> Result<HttpResponse, Error> {
-    let request_id = generate_request_id();
-    let job_id = Uuid::new_v4().to_string();
-
-    // Check if already reindexing
+fn launch_async_reindex_job(
+    config: web::Data<ApiConfig>,
+) -> Result<String, (StatusCode, String)> {
     if REINDEX_IN_PROGRESS
         .compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst)
         .is_err()
     {
-        return Ok(HttpResponse::TooManyRequests().json(json!({
-            "status": "busy",
-            "message": "Reindex already in progress",
-            "request_id": request_id
-        })));
+        return Err((
+            StatusCode::TOO_MANY_REQUESTS,
+            "Reindex already in progress".to_string(),
+        ));
     }
 
+    let job_id = Uuid::new_v4().to_string();
     let job = AsyncJob {
         job_id: job_id.clone(),
         status: "pending".to_string(),
@@ -660,30 +897,33 @@ pub async fn reindex_async_handler(config: web::Data<ApiConfig>) -> Result<HttpR
     };
 
     let jobs = get_jobs_map();
-    jobs.lock().unwrap().insert(job_id.clone(), job.clone());
+    jobs.lock().unwrap().insert(job_id.clone(), job);
 
-    // Spawn async task (non-blocking)
     let job_id_clone = job_id.clone();
+    let jobs_map = jobs.clone();
     let retriever_handle = RETRIEVER.get().map(|h| Arc::clone(h));
+    let config_clone = config.clone();
 
     actix_web::rt::spawn(async move {
         let start = std::time::Instant::now();
         let hooks = crate::monitoring::alerting_hooks::AlertingHooksConfig::from_env();
         if let Some(retriever) = retriever_handle {
             let mut retriever = retriever.lock().unwrap();
-            let mut job = jobs.lock().unwrap().get(&job_id_clone).cloned().unwrap();
-            job.status = "running".to_string();
-            jobs.lock().unwrap().insert(job_id_clone.clone(), job);
+            {
+                let mut job = jobs_map.lock().unwrap().get(&job_id_clone).cloned().unwrap();
+                job.status = "running".to_string();
+                jobs_map.lock().unwrap().insert(job_id_clone.clone(), job);
+            }
 
-            let chunker = crate::index::default_chunker(config.chunker_mode);
+            let chunker = crate::index::default_chunker(config_clone.chunker_mode);
             let res = index::index_all_documents(
                 &mut *retriever,
                 UPLOAD_DIR,
-                config.chunker_mode,
+                config_clone.chunker_mode,
                 chunker.as_ref(),
             );
 
-            let mut job = jobs.lock().unwrap().get(&job_id_clone).cloned().unwrap();
+            let mut job = jobs_map.lock().unwrap().get(&job_id_clone).cloned().unwrap();
             let duration_ms = start.elapsed().as_millis() as u64;
             let vectors = retriever.metrics.total_vectors as u64;
             let mappings = retriever.metrics.total_documents_indexed as u64;
@@ -713,16 +953,38 @@ pub async fn reindex_async_handler(config: web::Data<ApiConfig>) -> Result<HttpR
                     crate::monitoring::alerting_hooks::send_alert(&hooks, event).await;
                 }
             }
-            jobs.lock().unwrap().insert(job_id_clone.clone(), job);
+            jobs_map.lock().unwrap().insert(job_id_clone.clone(), job);
+        } else {
+            let mut job = jobs_map.lock().unwrap().get(&job_id_clone).cloned().unwrap();
+            job.status = "failed".to_string();
+            job.completed_at = Some(Utc::now().to_rfc3339());
+            job.error = Some("Retriever not initialized".to_string());
+            jobs_map.lock().unwrap().insert(job_id_clone.clone(), job.clone());
+            let event = crate::monitoring::alerting_hooks::ReindexCompletionEvent::error(0, 0, 0);
+            crate::monitoring::alerting_hooks::send_alert(&hooks, event).await;
         }
         REINDEX_IN_PROGRESS.store(false, Ordering::SeqCst);
     });
 
-    Ok(HttpResponse::Accepted().json(json!({
-        "status": "accepted",
-        "job_id": job_id,
-        "request_id": request_id
-    })))
+    Ok(job_id)
+}
+
+/// Phase 15: Async reindex endpoint
+pub async fn reindex_async_handler(config: web::Data<ApiConfig>) -> Result<HttpResponse, Error> {
+    let request_id = generate_request_id();
+
+    match launch_async_reindex_job(config) {
+        Ok(job_id) => Ok(HttpResponse::Accepted().json(json!({
+            "status": "accepted",
+            "job_id": job_id,
+            "request_id": request_id
+        }))),
+        Err((status, message)) => Ok(HttpResponse::build(status).json(json!({
+            "status": "busy",
+            "message": message,
+            "request_id": request_id
+        }))),
+    }
 }
 
 /// Phase 15: Check async job status
@@ -1104,7 +1366,9 @@ pub fn start_api_server(
     let force_single_worker = std::env::var("NO_DOTENV")
         .map(|v| v.to_lowercase() == "true" || v == "1")
         .unwrap_or(false);
+    let api_config = config.clone();
     let mut http_server = HttpServer::new(move || {
+        let api_config = api_config.clone();
         // Shared RateLimiter across workers (middleware-only enforcement)
         let rl_cfg = crate::security::rate_limiter::RateLimiterConfig {
             enabled: rate_limit_enabled,
@@ -1170,6 +1434,7 @@ pub fn start_api_server(
             .max_age(3600);
 
         App::new()
+            .app_data(web::Data::new(api_config.clone()))
             .app_data(rate_limit_state_data.clone())
             .wrap(cors)
             .wrap(crate::trace_middleware::TraceMiddleware::new())
@@ -1199,6 +1464,7 @@ pub fn start_api_server(
             .route("/upload", web::post().to(upload_document_inner))
             .route("/documents", web::get().to(list_documents))
             .route("/documents/{filename}", web::delete().to(delete_document))
+            .route("/config/chunk_size", web::post().to(commit_chunk_config))
             .route("/reindex", web::post().to(reindex_handler))
             .route("/reindex/async", web::post().to(reindex_async_handler))
             .route(
@@ -1214,6 +1480,10 @@ pub fn start_api_server(
             .route(
                 "/monitor/rate_limits/info",
                 web::get().to(get_rate_limit_monitor_info),
+            )
+            .route(
+                "/monitor/rate_limits/enabled",
+                web::post().to(set_rate_limit_enabled),
             )
             .route("/monitor/logs/recent", web::get().to(get_recent_logs))
             // ============================================================================

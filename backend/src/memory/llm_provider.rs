@@ -30,7 +30,7 @@ impl Default for LLMConfig {
     fn default() -> Self {
         Self::Phi35Ollama {
             ollama_url: "http://localhost:11434".to_string(),
-            model: "phi:3.5".to_string(),
+            model: "phi:latest".to_string(), // Phi-2 (3B) - fits in ~3GB RAM
         }
     }
 }
@@ -176,7 +176,7 @@ mod tests {
         let config = LLMConfig::default();
         match config {
             LLMConfig::Phi35Ollama { model, .. } => {
-                assert_eq!(model, "phi:3.5");
+                assert_eq!(model, "phi:latest");
             }
             _ => panic!("Default should be Phi35Ollama"),
         }
@@ -185,8 +185,8 @@ mod tests {
     #[test]
     fn test_ollama_provider_creation() {
         let provider =
-            OllamaProvider::new("http://localhost:11434".to_string(), "phi:3.5".to_string());
-        assert_eq!(provider.model_name(), "phi:3.5");
+            OllamaProvider::new("http://localhost:11434".to_string(), "phi:latest".to_string());
+        assert_eq!(provider.model_name(), "phi:latest");
     }
 
     #[test]

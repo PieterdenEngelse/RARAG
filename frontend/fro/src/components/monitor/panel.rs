@@ -5,6 +5,8 @@ pub struct PanelProps {
     #[props(default)]
     pub title: Option<String>,
     #[props(default)]
+    pub subtitle: Option<String>,
+    #[props(default)]
     pub refresh: Option<String>,
     children: Element,
 }
@@ -15,9 +17,14 @@ pub fn Panel(props: PanelProps) -> Element {
         div { class: "bg-gray-800 border border-gray-700 rounded-lg p-4 shadow",
             if let Some(title) = &props.title {
                 div { class: "flex items-center justify-between mb-3",
-                    h3 { class: "text-sm font-semibold text-gray-200", {title.clone()} }
+                    div { class: "flex items-center gap-3",
+                        h3 { class: "text-sm font-semibold text-gray-200", {title.clone()} }
+                        if let Some(subtitle) = &props.subtitle {
+                            span { class: "text-[10px] text-gray-400", {subtitle.clone()} }
+                        }
+                    }
                     if let Some(refresh) = &props.refresh {
-                        span { class: "text-xs text-gray-500", {refresh.clone()} }
+                        span { class: "text-xs text-white", {refresh.clone()} }
                     }
                 }
             }

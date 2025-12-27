@@ -11,5 +11,26 @@ module.exports = {
   theme: {
     extend: {},
   },
-  plugins: [],
+  plugins: [
+    require('daisyui'),
+  ],
+  daisyui: {
+    themes: [
+      "light",
+      {
+        dark: {
+          ...require("daisyui/src/theming/themes")["dark"],
+          primary: "#0D98BA",
+          "primary-content": "#ffffff",
+        },
+      },
+      "synthwave",
+      "cyberpunk"
+    ],
+    darkTheme: "dark",
+    base: true,
+    styled: true,
+    utils: true,
+    logs: false,
+  },
 };

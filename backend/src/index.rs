@@ -1,6 +1,5 @@
 use crate::config::ChunkerMode;
 use crate::embedder;
-use crate::memory::chunker::ChunkerConfig;
 use crate::memory::chunker_factory::{create_chunker, Chunker};
 use crate::retriever::Retriever;
 use std::fs;
@@ -147,6 +146,6 @@ fn extract_text(path: &Path) -> Option<String> {
 }
 
 pub fn default_chunker(mode: ChunkerMode) -> Box<dyn Chunker> {
-    let config = ChunkerConfig::from_env();
+    let config = crate::db::chunk_settings::global_config();
     create_chunker(mode.into(), &config)
 }

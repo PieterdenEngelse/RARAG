@@ -1223,3 +1223,33 @@ Here’s a two-part plan:
 
   Best next move: yes—start with W. Logging gives you persistence immediately, and we
   can layer the flexible response (V) on top once we know what consumers need.
+
+
+
+    Uploader-triggered reindex handles the controlled path where documents arrive via the API. It gives immediate consistency for deliberate uploads.
+
+    Filesystem watcher covers out-of-band additions (manual copies, sync tools, restores) that bypass the API. It lets the system react automatically when files change on disk.
+
+    Scheduled job is a safety net. Even if a watcher misses an event or the system was down when files were added, the periodic sweep can detect stragglers and reconcile state.
+
+Used together, they provide redundancy: uploads trigger indexing right away, watchers catch ad‑hoc file drops, and the scheduler ensures nothing slips through. Just make sure you keep the existing reindex concurrency guard so these triggers don’t start overlapping jobs, and expose the work via the current /reindex APIs so the progress monitor still shows accurate status.
+
+For manual validation of the new feature:
+
+    Upload a .txt file via POST /upload (curl or UI) and confirm the JSON response shows an entry under indexed_files.
+    Immediately search for content from the uploaded file to confirm auto-indexing worked without calling /reindex.
+
+Now the Upload button should:
+
+    Open a file picker dialog when clicked
+    Allow selecting multiple files
+    Upload each file to the backend /upload endpoint
+    Log success/failure to the browser console
+
+The changes made:
+
+    frontend/fro/Cargo.toml: Added js-sys dependency and additional web-sys features for Blob, BlobPropertyBag, FormData, File
+    frontend/fro/src/api.rs: Added upload_document function that creates a multipart form upload
+    frontend/fro/src/pages/monitor/index_page.rs: Changed the Upload button to a hidden file input with a label, triggering file selection and upload on change
+
+You may need to restart the dev server for the Cargo.toml changes to take effect. Would you like me to add any visual feedback (like a loading state or success message) when files are being uploaded?

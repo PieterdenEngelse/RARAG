@@ -1,4 +1,20 @@
-/// Splits cleaned text into ~500–800 character chunks for small local models.
+use std::env;
+
+/// Default max characters per chunk (optimized for phi/small models)
+/// Can be overridden with CHUNK_MAX_CHARS environment variable
+pub const DEFAULT_MAX_CHARS: usize = 1500; // ~375 tokens at 4 chars/token
+
+/// Get max chars from environment or use default
+pub fn get_max_chars() -> usize {
+    env::var("CHUNK_MAX_CHARS")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(DEFAULT_MAX_CHARS)
+}
+
+/// Splits cleaned text into chunks for small local models.
+/// Default: ~1500 characters (~375 tokens) optimized for phi model.
+/// Configure with CHUNK_MAX_CHARS environment variable.
 pub fn chunk_text(text: &str, max_chars: usize) -> Vec<String> {
     let mut chunks = Vec::new();
     let mut current = String::new();

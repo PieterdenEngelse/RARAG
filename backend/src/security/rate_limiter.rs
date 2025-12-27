@@ -2,6 +2,7 @@ use lru::LruCache;
 use serde::Serialize;
 use std::net::IpAddr;
 use std::num::NonZeroUsize;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
@@ -22,6 +23,7 @@ struct Bucket {
 /// Per-key token-bucket rate limiter with LRU-bounded state
 pub struct RateLimiter {
     config: RateLimiterConfig,
+    enabled: AtomicBool,
     buckets: Mutex<LruCache<String, Bucket>>, // keyed by IP string
 }
 
@@ -35,8 +37,10 @@ pub struct RateLimiterState {
 impl RateLimiter {
     pub fn new(config: RateLimiterConfig) -> Self {
         let cap = NonZeroUsize::new(config.max_ips.max(1)).unwrap();
+        let enabled = config.enabled;
         Self {
             config,
+            enabled: AtomicBool::new(enabled),
             buckets: Mutex::new(LruCache::new(cap)),
         }
     }
@@ -44,10 +48,21 @@ impl RateLimiter {
     pub fn snapshot(&self) -> RateLimiterState {
         let guard = self.buckets.lock().expect("rate limiter mutex poisoned");
         RateLimiterState {
-            enabled: self.config.enabled,
+            enabled: self.enabled.load(Ordering::Relaxed),
             active_keys: guard.len(),
             capacity: self.config.max_ips,
         }
+    }
+
+    /// Toggle the rate limiter on/off and return the new state
+    pub fn set_enabled(&self, enabled: bool) -> bool {
+        self.enabled.store(enabled, Ordering::Relaxed);
+        enabled
+    }
+
+    /// Check if rate limiter is currently enabled
+    pub fn is_enabled(&self) -> bool {
+        self.enabled.load(Ordering::Relaxed)
     }
 
     fn key_for(ip: IpAddr) -> String {
@@ -56,7 +71,7 @@ impl RateLimiter {
 
     /// Compatibility API used by middleware: override QPS per call; burst from config
     pub fn check_rate_limit(&self, ip: IpAddr, qps_override: f64) -> bool {
-        if !self.config.enabled {
+        if !self.is_enabled() {
             return true;
         }
         let qps = if qps_override > 0.0 {
@@ -72,7 +87,7 @@ impl RateLimiter {
 
     /// General check for an arbitrary key; returns (allow, retry_after_secs)
     pub fn check_key(&self, key: &str, qps: f64, burst: f64) -> (bool, u64) {
-        if !self.config.enabled {
+        if !self.is_enabled() {
             return (true, 0);
         }
         if burst <= 0.0 {

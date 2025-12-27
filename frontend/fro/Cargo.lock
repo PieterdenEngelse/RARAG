@@ -787,6 +787,7 @@ dependencies = [
  "dioxus-signals",
  "gloo-net",
  "gloo-timers",
+ "js-sys",
  "manganis",
  "markdown",
  "reqwest",

@@ -91,14 +91,14 @@ async fn main() -> std::io::Result<()> {
     let db_start = Instant::now();
     info!("📦 Initializing database schema...");
 
-    let _db_conn = match (|| -> std::io::Result<Arc<Mutex<rusqlite::Connection>>> {
+    let _db_conn = match (|| -> std::io::Result<rusqlite::Connection> {
         let conn = rusqlite::Connection::open(pm.db_path("documents"))
             .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e.to_string()))?;
 
         SchemaInitializer::init(&conn)
             .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e.to_string()))?;
 
-        Ok(Arc::new(Mutex::new(conn)))
+        Ok(conn)
     })() {
         Ok(conn) => {
             let duration_ms = db_start.elapsed().as_millis() as u64;
@@ -110,6 +110,9 @@ async fn main() -> std::io::Result<()> {
             return Err(e);
         }
     };
+
+    ag::db::chunk_settings::set_global_db_path(pm.db_path("documents"));
+    ag::db::chunk_settings::load_active_config(&_db_conn);
 
     // ─────────────────────────────────────────────────────────────
     // PHASE 4: Initialize Retriever with PathManager

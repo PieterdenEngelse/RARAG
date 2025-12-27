@@ -26,6 +26,16 @@ pub fn Header() -> Element {
                 // Desktop Navigation
                 nav { class: "hidden md:flex items-center gap-6 text-sm",
                     Link {
+                        to: Route::MonitorOverview {},
+                        class: "text-teal-100 hover:text-white transition-colors",
+                        "Monitor"
+                    }
+                    Link {
+                        to: Route::Config {},
+                        class: "text-teal-100 hover:text-white transition-colors",
+                        "Config"
+                    }
+                    Link {
                         to: Route::Home {},
                         class: "text-teal-200 hover:text-white transition-colors",
                         "Home"
@@ -53,6 +63,18 @@ pub fn Header() -> Element {
             // Mobile Dropdown Menu
             if menu_open() {
                 div { class: "md:hidden mt-4 pb-4 flex flex-col gap-4",
+                    Link {
+                        to: Route::MonitorOverview {},
+                        class: "text-teal-100 hover:text-white transition-colors",
+                        onclick: move |_| menu_open.set(false),
+                        "Monitor"
+                    }
+                    Link {
+                        to: Route::Config {},
+                        class: "text-teal-100 hover:text-white transition-colors",
+                        onclick: move |_| menu_open.set(false),
+                        "Config"
+                    }
                     Link {
                         to: Route::Home {},
                         class: "text-teal-200 hover:text-white transition-colors",

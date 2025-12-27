@@ -1,11 +1,13 @@
 [application]
-# sub_package = "fro"  # Not needed when running from this directory
+sub_package = "fro"
+asset_dir = "frontend/fro/public"
+out_dir = "frontend/fro/dist"
 
 [web.app]
 title = "fro"
 
 [web.watcher]
-watch_path = ["src", "public", "assets"]
+watch_path = ["frontend/fro/src", "frontend/fro/public", "frontend/fro/assets"]
 reload_html = true
 index_on_404 = true
 
@@ -16,6 +18,3 @@ script = []
 [web.resource.dev]
 style = []
 script = []
-
-[web.server]
-port = 1789

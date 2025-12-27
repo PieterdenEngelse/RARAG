@@ -144,7 +144,10 @@ pub fn MonitorOverview() -> Element {
             div { class: "flex flex-wrap gap-3",
                 button { class: "px-4 py-2 rounded bg-indigo-600 text-white", "Trigger Reindex" }
                 button { class: "px-4 py-2 rounded bg-gray-700 text-gray-200", "Clear Cache" }
-                button { class: "px-4 py-2 rounded bg-teal-600 text-white", "View Grafana" }
+                button {
+                    class: "px-4 py-2 rounded border border-teal-400 text-teal-400 hover:bg-teal-500/10",
+                    "View Grafana"
+                }
             }
         }
     }

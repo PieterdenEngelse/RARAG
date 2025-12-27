@@ -25,6 +25,13 @@ struct IndexState {
     status_message: Option<String>,
     chunking_logging_enabled: Option<bool>,
     chunking_logging_message: Option<String>,
+    // Upload progress tracking
+    upload_running: bool,
+    upload_total_files: usize,
+    upload_completed_files: usize,
+    upload_failed_files: usize,
+    upload_current_file: Option<String>,
+    upload_message: Option<String>,
 }
 
 #[derive(Clone)]
@@ -147,7 +154,14 @@ pub fn MonitorIndex() -> Element {
         use_future(move || async move {
             loop {
                 refresh_job_statuses(jobs.clone(), state.clone(), false).await;
-                TimeoutFuture::new(5_000).await;
+                
+                // Poll faster (2s) when there's an active job, slower (5s) when idle
+                let has_active_job = {
+                    let guard = jobs.read();
+                    guard.iter().any(|job| !job.is_terminal())
+                };
+                let poll_interval = if has_active_job { 2_000 } else { 5_000 };
+                TimeoutFuture::new(poll_interval).await;
             }
         });
     }
@@ -220,18 +234,6 @@ pub fn MonitorIndex() -> Element {
         })
     };
 
-    let refresh_all_jobs = {
-        let mut jobs = jobs.clone();
-        let mut state = state.clone();
-        move |_| {
-            let jobs = jobs.clone();
-            let state = state.clone();
-            spawn(async move {
-                refresh_job_statuses(jobs, state, true).await;
-            });
-        }
-    };
-
     let snapshot = state.read().clone();
     let info_snapshot = index_info.read().clone();
     let job_rows = jobs.read().clone();
@@ -275,7 +277,7 @@ pub fn MonitorIndex() -> Element {
 
 
             Panel { title: Some("Current Snapshot".into()), refresh: Some("10s".into()),
-                div { class: "relative",
+                div { class: "relative rounded border border-slate-700 bg-slate-900/40 p-4 mx-4",
                     if info_snapshot.loading {
                         div { class: "text-sm text-gray-400", "Loading index info…" }
                     } else if let Some(err) = info_snapshot.error.clone() {
@@ -295,6 +297,7 @@ pub fn MonitorIndex() -> Element {
                                             }
                                         }
                                         div { class: "flex items-center gap-2",
+                                            // Logging toggle
                                             if snapshot.chunking_logging_enabled.is_some() {
                                                 button {
                                                     class: "text-[11px] px-3 py-1 rounded border border-slate-500 text-slate-200 hover:bg-slate-600/20 disabled:opacity-40",
@@ -329,6 +332,7 @@ pub fn MonitorIndex() -> Element {
                                                     if snapshot.chunking_logging_enabled.unwrap_or(true) { "Disable logging" } else { "Enable logging" }
                                                 }
                                             }
+                                            // More info dropdown
                                             div { class: "relative",
                                                 button {
                                                     class: "text-[11px] px-3 py-1 rounded border border-slate-500 text-slate-200 hover:bg-slate-600/20 disabled:opacity-40",
@@ -352,10 +356,7 @@ pub fn MonitorIndex() -> Element {
                                                             },
                                                         }
                                                         div {
-                                                            class: "absolute z-50 right-0 top-full mt-2 w-52 rounded border border-slate-700 bg-slate-900 text-[11px] text-slate-100 shadow-xl",
-                                                            div { class: "px-3 py-2 border-b border-slate-700 text-xs text-slate-300",
-                                                                "Chunks"
-                                                            }
+                                                            class: "absolute z-50 left-1/2 -translate-x-1/2 top-full mt-2 w-52 rounded border border-slate-700 bg-slate-900 text-[11px] text-slate-100 shadow-xl",
                                                             button {
                                                                 class: "w-full px-3 py-2 text-left hover:bg-slate-800 border-b border-slate-700",
                                                                 onclick: {
@@ -509,75 +510,209 @@ pub fn MonitorIndex() -> Element {
             }
 
             Panel { title: Some("Reindex Status".into()), refresh: Some("5s".into()),
-                if let Some(job) = latest_job.clone() {
-                    div { class: "space-y-2 text-sm text-gray-300",
-                        p { class: "text-xs text-gray-400", "Tracking job {job.job_id}" }
-                        div { class: "text-base text-gray-100", "Current status: {pretty_status(&job.status)}" }
-                        div { class: "grid grid-cols-1 md:grid-cols-3 gap-3 text-xs", 
-                            div {
-                                span { class: "font-semibold text-gray-200", "Started" }
-                                br {}
-                                span { class: "text-gray-400", "{format_timestamp(job.started_at.as_ref())}" }
+                div { class: "relative",
+                    div { class: "relative rounded border border-slate-700 bg-slate-900/40 p-4 mx-4 space-y-4",
+                        div { class: "flex items-center gap-2",
+                            // Block: light grey card with status and action buttons
+                            div { class: "inline-block rounded p-4 bg-gray-800",
+                                div { class: "flex items-center gap-4",
+                                    div {
+                                        div { class: "text-xs text-gray-400", "Reindex Status" }
+                                        if let Some(job) = latest_job.clone() {
+                                            div { class: "text-lg font-bold text-gray-100", "{job.status}" }
+                                        } else {
+                                            div { class: "text-lg font-bold text-gray-500", "Ready" }
+                                        }
+                                    }
+                                    div { class: "flex items-center gap-2",
+                                        button {
+                                            class: "text-[11px] px-3 py-1 rounded bg-indigo-600 text-white disabled:opacity-40",
+                                            disabled: snapshot.sync_running,
+                                            onclick: {
+                                                let trigger_sync_reindex = trigger_sync_reindex.clone();
+                                                move |evt| (trigger_sync_reindex)(evt)
+                                            },
+                                            if snapshot.sync_running { "Reindexing…" } else { "Now" }
+                                        }
+                                        button {
+                                            class: "text-[11px] px-3 py-1 rounded bg-teal-600 text-white disabled:opacity-40",
+                                            disabled: snapshot.async_running,
+                                            onclick: {
+                                                let trigger_async_reindex = trigger_async_reindex.clone();
+                                                move |evt| (trigger_async_reindex)(evt)
+                                            },
+                                            if snapshot.async_running { "Submitting…" } else { "Background" }
+                                        }
+                                        button {
+                                            class: "text-[11px] px-3 py-1 rounded border border-slate-500 text-slate-200 hover:bg-slate-600/20",
+                                            onclick: {
+                                                let mut reindex_info_open = reindex_info_open.clone();
+                                                move |_| reindex_info_open.set(true)
+                                            },
+                                            "More info"
+                                        }
+                                    }
+                                }
                             }
-                            div {
-                                span { class: "font-semibold text-gray-200", "Completed" }
-                                br {}
-                                span { class: "text-gray-400", "{format_timestamp(job.completed_at.as_ref())}" }
-                            }
-                            div {
-                                span { class: "font-semibold text-gray-200", "Vectors / Docs" }
-                                br {}
-                                span { class: "text-gray-400", "{format_vectors_docs(job.vectors_indexed, job.mappings_indexed)}" }
+                            // Upload button outside the block, near More info
+                            label {
+                                class: "text-[11px] px-3 py-1 rounded border border-slate-500 text-slate-200 hover:bg-slate-600/20 cursor-pointer",
+                                input {
+                                    r#type: "file",
+                                    class: "hidden",
+                                    multiple: true,
+                                    disabled: snapshot.upload_running,
+                                    onchange: {
+                                        let mut state = state.clone();
+                                        move |evt: dioxus::prelude::Event<dioxus::prelude::FormData>| {
+                                            let mut state = state.clone();
+                                            spawn(async move {
+                                                if let Some(file_engine) = evt.files() {
+                                                    let files = file_engine.files();
+                                                    let total = files.len();
+                                                    
+                                                    if total == 0 {
+                                                        return;
+                                                    }
+                                                    
+                                                    // Start upload
+                                                    {
+                                                        let mut s = state.write();
+                                                        s.upload_running = true;
+                                                        s.upload_total_files = total;
+                                                        s.upload_completed_files = 0;
+                                                        s.upload_failed_files = 0;
+                                                        s.upload_current_file = None;
+                                                        s.upload_message = Some(format!("Starting upload of {} file(s)...", total));
+                                                    }
+                                                    
+                                                    for file_name in files {
+                                                        // Update current file
+                                                        {
+                                                            let mut s = state.write();
+                                                            s.upload_current_file = Some(file_name.clone());
+                                                            s.upload_message = Some(format!("Uploading: {}", file_name));
+                                                        }
+                                                        
+                                                        if let Some(file_data) = file_engine.read_file(&file_name).await {
+                                                            match api::upload_document(&file_name, &file_data).await {
+                                                                Ok(_) => {
+                                                                    let mut s = state.write();
+                                                                    s.upload_completed_files += 1;
+                                                                }
+                                                                Err(err) => {
+                                                                    let mut s = state.write();
+                                                                    s.upload_failed_files += 1;
+                                                                    s.upload_message = Some(format!("Failed: {} - {}", file_name, err));
+                                                                }
+                                                            }
+                                                        } else {
+                                                            let mut s = state.write();
+                                                            s.upload_failed_files += 1;
+                                                        }
+                                                    }
+                                                    
+                                                    // Complete
+                                                    {
+                                                        let mut s = state.write();
+                                                        let completed = s.upload_completed_files;
+                                                        let failed = s.upload_failed_files;
+                                                        s.upload_running = false;
+                                                        s.upload_current_file = None;
+                                                        s.upload_message = Some(format!(
+                                                            "Upload complete: {} succeeded, {} failed",
+                                                            completed, failed
+                                                        ));
+                                                    }
+                                                }
+                                            });
+                                        }
+                                    },
+                                }
+                                if snapshot.upload_running { "Uploading..." } else { "Upload" }
                             }
                         }
-                        if let Some(err) = job.error.clone() {
-                            div { class: "text-xs text-red-400", "Error: {err}" }
+
+                        // Upload progress monitor
+                        if snapshot.upload_running || snapshot.upload_message.is_some() {
+                            div { class: "space-y-2",
+                                // Progress bar
+                                if snapshot.upload_total_files > 0 {
+                                    div { class: "relative h-2 bg-gray-700 rounded-full overflow-hidden",
+                                        div {
+                                            class: {
+                                                if snapshot.upload_running {
+                                                    "h-full bg-indigo-500 transition-all duration-300"
+                                                } else if snapshot.upload_failed_files > 0 {
+                                                    "h-full bg-yellow-500 transition-all duration-300"
+                                                } else {
+                                                    "h-full bg-teal-500 transition-all duration-300"
+                                                }
+                                            },
+                                            style: "width: {((snapshot.upload_completed_files + snapshot.upload_failed_files) * 100) / snapshot.upload_total_files.max(1)}%",
+                                        }
+                                    }
+                                }
+                                // Status text
+                                div { class: "flex justify-between text-[10px]",
+                                    span {
+                                        class: {
+                                            if snapshot.upload_running {
+                                                "text-indigo-300"
+                                            } else if snapshot.upload_failed_files > 0 {
+                                                "text-yellow-400"
+                                            } else {
+                                                "text-teal-300"
+                                            }
+                                        },
+                                        if let Some(msg) = snapshot.upload_message.clone() {
+                                            "{msg}"
+                                        }
+                                    }
+                                    if snapshot.upload_total_files > 0 {
+                                        span { class: "text-white",
+                                            "{snapshot.upload_completed_files + snapshot.upload_failed_files} / {snapshot.upload_total_files} files"
+                                        }
+                                    }
+                                }
+                            }
                         }
-                    }
-                } else {
-                    div { class: "text-xs text-gray-400", "No async reindex job tracked yet. Trigger one to begin polling." }
-                }
 
-                if let Some(message) = snapshot.status_message.clone() {
-                    div { class: "text-xs text-indigo-300 mt-3", "{message}" }
-                }
+                        if let Some(job) = latest_job.clone() {
+                            div { class: "space-y-3 text-sm text-gray-300",
+                                // Combined Step + Progress Bar Monitor
+                                {render_progress_monitor(&job)}
 
-                div { class: "flex flex-wrap gap-3 mt-4 text-xs",
-                    button {
-                        class: "px-3 py-2 rounded bg-indigo-600 text-white disabled:opacity-40",
-                            disabled: snapshot.sync_running,
-                            onclick: {
-                                let trigger_sync_reindex = trigger_sync_reindex.clone();
-                                move |evt| (trigger_sync_reindex)(evt)
-                            },
-                        if snapshot.sync_running { "Sync reindex running…" } else { "Trigger Sync Reindex" }
-                    }
-                    button {
-                        class: "px-3 py-2 rounded bg-teal-600 text-white disabled:opacity-40",
-                            disabled: snapshot.async_running,
-                            onclick: {
-                                let trigger_async_reindex = trigger_async_reindex.clone();
-                                move |evt| (trigger_async_reindex)(evt)
-                            },
-                        if snapshot.async_running { "Async job submitting…" } else { "Trigger Async Reindex" }
-                    }
-                    button {
-                        class: "px-3 py-2 rounded border border-gray-600 text-gray-200 hover:border-gray-400",
-                        onclick: refresh_all_jobs,
-                        "Refresh Status"
-                    }
-                    button {
-                        class: "px-3 py-2 rounded border border-gray-600 text-gray-200 hover:border-gray-400",
-                        onclick: {
-                            let mut reindex_info_open = reindex_info_open.clone();
-                            move |_| reindex_info_open.set(true)
-                        },
-                        "More info"
+                                div { class: "grid grid-cols-1 md:grid-cols-3 gap-3 text-xs",
+                                    div {
+                                        span { class: "font-semibold text-gray-200", "Started" }
+                                        br {}
+                                        span { class: "text-gray-400", "{format_timestamp(job.started_at.as_ref())}" }
+                                    }
+                                    div {
+                                        span { class: "font-semibold text-gray-200", "Completed" }
+                                        br {}
+                                        span { class: "text-gray-400", "{format_timestamp(job.completed_at.as_ref())}" }
+                                    }
+                                    div {
+                                        span { class: "font-semibold text-gray-200", "Vectors / Docs" }
+                                        br {}
+                                        span { class: "text-gray-400", "{format_vectors_docs(job.vectors_indexed, job.mappings_indexed)}" }
+                                    }
+                                }
+                                if let Some(err) = job.error.clone() {
+                                    div { class: "text-xs text-red-400", "Error: {err}" }
+                                }
+                                if let Some(message) = snapshot.status_message.clone() {
+                                    div { class: "text-xs text-indigo-300", "{message}" }
+                                }
+                            }
+                        }
                     }
                 }
             }
 
-            Panel { title: Some("Async Jobs".into()), refresh: Some("5s".into()),
+            Panel { title: Some("Async Jobs (Background)".into()), refresh: Some("5s".into()),
                 if job_table_rows.is_empty() {
                     div { class: "text-sm text-gray-500", "No tracked jobs yet." }
                 } else {
@@ -677,6 +812,117 @@ fn CopyButton(props: CopyButtonProps) -> Element {
             class: props.button_class.clone(),
             onclick: handle_click,
             if copied() { "Copied" } else { "Copy" }
+        }
+    }
+}
+
+/// Renders a combined step indicator + progress bar for reindex jobs
+fn render_progress_monitor(job: &ReindexJobRow) -> Element {
+    // Determine current phase based on status
+    let (phase, progress_percent) = match job.status.as_str() {
+        "accepted" => (0, 5),      // Just started - Scanning
+        "running" => (1, 50),      // In progress - Processing  
+        "completed" => (3, 100),   // Done
+        "failed" => (3, 100),      // Failed (show full bar in red)
+        _ => (0, 0),
+    };
+    
+    let is_failed = job.status == "failed";
+    let is_running = matches!(job.status.as_str(), "accepted" | "running");
+    
+    // Phase labels
+    let phases = ["Scan", "Process", "Index", "Done"];
+    
+    rsx! {
+        div { class: "space-y-2",
+            // Step indicators
+            div { class: "flex items-center justify-between text-[10px]",
+                for (i, label) in phases.iter().enumerate() {
+                    div { class: "flex items-center gap-1",
+                        // Step icon
+                        span {
+                            class: {
+                                if is_failed && i == 3 {
+                                    "w-4 h-4 rounded-full flex items-center justify-center bg-red-500 text-white text-[8px]"
+                                } else if i < phase {
+                                    "w-4 h-4 rounded-full flex items-center justify-center bg-teal-500 text-white text-[8px]"
+                                } else if i == phase && is_running {
+                                    "w-4 h-4 rounded-full flex items-center justify-center bg-indigo-500 text-white text-[8px] animate-pulse"
+                                } else if i == phase {
+                                    "w-4 h-4 rounded-full flex items-center justify-center bg-teal-500 text-white text-[8px]"
+                                } else {
+                                    "w-4 h-4 rounded-full flex items-center justify-center bg-gray-700 text-gray-500 text-[8px]"
+                                }
+                            },
+                            if i < phase || (i == phase && !is_running) {
+                                "✓"
+                            } else if i == phase && is_running {
+                                "●"
+                            } else {
+                                "○"
+                            }
+                        }
+                        // Label
+                        span {
+                            class: {
+                                if i <= phase {
+                                    "text-gray-200"
+                                } else {
+                                    "text-gray-500"
+                                }
+                            },
+                            "{label}"
+                        }
+                    }
+                    // Connector line (except after last)
+                    if i < phases.len() - 1 {
+                        div {
+                            class: {
+                                if i < phase {
+                                    "flex-1 h-px bg-teal-500 mx-2"
+                                } else {
+                                    "flex-1 h-px bg-gray-700 mx-2"
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            
+            // Progress bar
+            div { class: "relative h-2 bg-gray-700 rounded-full overflow-hidden",
+                div {
+                    class: {
+                        if is_failed {
+                            "h-full bg-red-500 transition-all duration-500"
+                        } else if is_running {
+                            "h-full bg-indigo-500 transition-all duration-500"
+                        } else {
+                            "h-full bg-teal-500 transition-all duration-500"
+                        }
+                    },
+                    style: "width: {progress_percent}%",
+                }
+            }
+            
+            // Status text
+            div { class: "flex justify-between text-[10px]",
+                span {
+                    class: {
+                        if is_failed {
+                            "text-red-400"
+                        } else if is_running {
+                            "text-indigo-300"
+                        } else {
+                            "text-teal-300"
+                        }
+                    },
+                    {pretty_status(&job.status)}
+                }
+                if let (Some(v), Some(m)) = (job.vectors_indexed, job.mappings_indexed) {
+                    span { class: "text-gray-400", "{v} vectors / {m} docs" }
+                }
+            }
         }
     }
 }
