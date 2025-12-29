@@ -2,6 +2,7 @@ use crate::agent::{Agent, AgentResponse};
 use crate::agent_memory::{AgentMemory, MemoryItem, MemorySearchResult};
 use crate::config::ApiConfig;
 use crate::db::chunk_settings;
+use crate::db::llm_settings::{self, LlmConfig};
 use crate::index;
 use crate::memory::chunker::ChunkerConfig;
 use crate::monitoring::config::MonitoringConfig;
@@ -227,6 +228,27 @@ struct ChunkCommitResponse {
     reindex_job_id: Option<String>,
 }
 
+#[derive(Debug, serde::Deserialize)]
+struct LlmConfigRequest {
+    temperature: f32,
+    top_p: f32,
+    top_k: usize,
+    max_tokens: usize,
+    repeat_penalty: f32,
+    frequency_penalty: f32,
+    presence_penalty: f32,
+    stop_sequences: Vec<String>,
+    seed: Option<i64>,
+}
+
+#[derive(Debug, Serialize)]
+struct LlmConfigResponse {
+    status: String,
+    message: String,
+    request_id: String,
+    config: LlmConfig,
+}
+
 #[derive(Serialize)]
 struct LogEntry {
     timestamp: Option<String>,
@@ -266,8 +288,36 @@ fn validate_chunk_request(req: &ChunkConfigCommitRequest) -> Result<(), String> 
     if req.max_size == 0 {
         return Err("max_size must be greater than 0".into());
     }
-    if req.semantic_similarity_threshold.map_or(false, |v| !(0.0..=1.0).contains(&v)) {
+    if req
+        .semantic_similarity_threshold
+        .map_or(false, |v| !(0.0..=1.0).contains(&v))
+    {
         return Err("semantic_similarity_threshold must be between 0 and 1".into());
+    }
+    Ok(())
+}
+
+fn validate_llm_request(req: &LlmConfigRequest) -> Result<(), String> {
+    if !(0.0..=2.0).contains(&req.temperature) {
+        return Err("temperature must be between 0 and 2".into());
+    }
+    if !(0.0..=1.0).contains(&req.top_p) {
+        return Err("top_p must be between 0 and 1".into());
+    }
+    if req.top_k == 0 {
+        return Err("top_k must be greater than 0".into());
+    }
+    if req.max_tokens == 0 {
+        return Err("max_tokens must be greater than 0".into());
+    }
+    if req.repeat_penalty < 1.0 {
+        return Err("repeat_penalty must be at least 1.0".into());
+    }
+    if !(0.0..=2.0).contains(&req.frequency_penalty) {
+        return Err("frequency_penalty must be between 0 and 2".into());
+    }
+    if !(0.0..=2.0).contains(&req.presence_penalty) {
+        return Err("presence_penalty must be between 0 and 2".into());
     }
     Ok(())
 }
@@ -503,6 +553,78 @@ async fn commit_chunk_config(
     }
 }
 
+async fn get_llm_config() -> Result<HttpResponse, Error> {
+    let request_id = generate_request_id();
+    let config = llm_settings::global_config();
+    Ok(HttpResponse::Ok().json(LlmConfigResponse {
+        status: "ok".into(),
+        message: "Current LLM configuration".into(),
+        request_id,
+        config,
+    }))
+}
+
+async fn commit_llm_config(payload: web::Json<LlmConfigRequest>) -> Result<HttpResponse, Error> {
+    let request_id = generate_request_id();
+    let body = payload.into_inner();
+
+    if let Err(msg) = validate_llm_request(&body) {
+        return Ok(HttpResponse::BadRequest().json(json!({
+            "status": "invalid",
+            "message": msg,
+            "request_id": request_id
+        })));
+    }
+
+    let new_cfg = LlmConfig {
+        temperature: body.temperature,
+        top_p: body.top_p,
+        top_k: body.top_k,
+        max_tokens: body.max_tokens,
+        repeat_penalty: body.repeat_penalty,
+        frequency_penalty: body.frequency_penalty,
+        presence_penalty: body.presence_penalty,
+        stop_sequences: body.stop_sequences,
+        seed: body.seed,
+    };
+
+    match llm_settings::save_llm_config_default_db(&new_cfg) {
+        Ok(_) => {
+            tracing::info!(
+                request_id = %request_id,
+                temperature = new_cfg.temperature,
+                top_p = new_cfg.top_p,
+                top_k = new_cfg.top_k,
+                max_tokens = new_cfg.max_tokens,
+                repeat_penalty = new_cfg.repeat_penalty,
+                frequency_penalty = new_cfg.frequency_penalty,
+                presence_penalty = new_cfg.presence_penalty,
+                stop_sequences = ?new_cfg.stop_sequences,
+                seed = ?new_cfg.seed,
+                "LLM config committed"
+            );
+            Ok(HttpResponse::Ok().json(LlmConfigResponse {
+                status: "ok".into(),
+                message: "LLM settings saved".into(),
+                request_id,
+                config: new_cfg,
+            }))
+        }
+        Err(err) => {
+            tracing::error!(
+                request_id = %request_id,
+                error = %err,
+                "Failed to save LLM config"
+            );
+            Ok(HttpResponse::InternalServerError().json(json!({
+                "status": "error",
+                "message": format!("Failed to save LLM config: {}", err),
+                "request_id": request_id
+            })))
+        }
+    }
+}
+
 async fn get_cache_monitor_info() -> Result<HttpResponse, Error> {
     let request_id = generate_request_id();
     let retriever = match RETRIEVER.get() {
@@ -601,15 +723,15 @@ async fn set_rate_limit_enabled(
 ) -> Result<HttpResponse, Error> {
     let request_id = generate_request_id();
     let new_state = state.limiter.set_enabled(body.enabled);
-    
+
     let message = if new_state {
         "Rate limiter enabled".to_string()
     } else {
         "Rate limiter disabled".to_string()
     };
-    
+
     tracing::info!("[{}] Rate limiter set to: {}", request_id, new_state);
-    
+
     Ok(HttpResponse::Ok().json(SetRateLimitEnabledResponse {
         request_id,
         enabled: new_state,
@@ -872,9 +994,7 @@ pub async fn reindex_handler(config: web::Data<ApiConfig>) -> Result<HttpRespons
     }
 }
 
-fn launch_async_reindex_job(
-    config: web::Data<ApiConfig>,
-) -> Result<String, (StatusCode, String)> {
+fn launch_async_reindex_job(config: web::Data<ApiConfig>) -> Result<String, (StatusCode, String)> {
     if REINDEX_IN_PROGRESS
         .compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst)
         .is_err()
@@ -910,7 +1030,12 @@ fn launch_async_reindex_job(
         if let Some(retriever) = retriever_handle {
             let mut retriever = retriever.lock().unwrap();
             {
-                let mut job = jobs_map.lock().unwrap().get(&job_id_clone).cloned().unwrap();
+                let mut job = jobs_map
+                    .lock()
+                    .unwrap()
+                    .get(&job_id_clone)
+                    .cloned()
+                    .unwrap();
                 job.status = "running".to_string();
                 jobs_map.lock().unwrap().insert(job_id_clone.clone(), job);
             }
@@ -923,7 +1048,12 @@ fn launch_async_reindex_job(
                 chunker.as_ref(),
             );
 
-            let mut job = jobs_map.lock().unwrap().get(&job_id_clone).cloned().unwrap();
+            let mut job = jobs_map
+                .lock()
+                .unwrap()
+                .get(&job_id_clone)
+                .cloned()
+                .unwrap();
             let duration_ms = start.elapsed().as_millis() as u64;
             let vectors = retriever.metrics.total_vectors as u64;
             let mappings = retriever.metrics.total_documents_indexed as u64;
@@ -955,11 +1085,19 @@ fn launch_async_reindex_job(
             }
             jobs_map.lock().unwrap().insert(job_id_clone.clone(), job);
         } else {
-            let mut job = jobs_map.lock().unwrap().get(&job_id_clone).cloned().unwrap();
+            let mut job = jobs_map
+                .lock()
+                .unwrap()
+                .get(&job_id_clone)
+                .cloned()
+                .unwrap();
             job.status = "failed".to_string();
             job.completed_at = Some(Utc::now().to_rfc3339());
             job.error = Some("Retriever not initialized".to_string());
-            jobs_map.lock().unwrap().insert(job_id_clone.clone(), job.clone());
+            jobs_map
+                .lock()
+                .unwrap()
+                .insert(job_id_clone.clone(), job.clone());
             let event = crate::monitoring::alerting_hooks::ReindexCompletionEvent::error(0, 0, 0);
             crate::monitoring::alerting_hooks::send_alert(&hooks, event).await;
         }
@@ -1465,6 +1603,8 @@ pub fn start_api_server(
             .route("/documents", web::get().to(list_documents))
             .route("/documents/{filename}", web::delete().to(delete_document))
             .route("/config/chunk_size", web::post().to(commit_chunk_config))
+            .route("/config/llm", web::get().to(get_llm_config))
+            .route("/config/llm", web::post().to(commit_llm_config))
             .route("/reindex", web::post().to(reindex_handler))
             .route("/reindex/async", web::post().to(reindex_async_handler))
             .route(

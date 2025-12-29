@@ -83,7 +83,7 @@ pub fn MonitorRateLimits() -> Element {
                                                 let mut state = state.clone();
                                                 let current_enabled = state.read().data.as_ref().map(|d| d.config.enabled).unwrap_or(false);
                                                 let new_enabled = !current_enabled;
-                                                
+
                                                 // Optimistic update - change UI immediately
                                                 {
                                                     let mut s = state.write();
@@ -93,7 +93,7 @@ pub fn MonitorRateLimits() -> Element {
                                                         d.limiter_state.enabled = new_enabled;
                                                     }
                                                 }
-                                                
+
                                                 spawn(async move {
                                                     match api::set_rate_limit_enabled(new_enabled).await {
                                                         Ok(resp) => {
@@ -259,7 +259,11 @@ token bucket. When full, the least recent IP is removed.".into()),
 }
 
 fn yes_no(flag: bool) -> String {
-    if flag { "Yes".into() } else { "No".into() }
+    if flag {
+        "Yes".into()
+    } else {
+        "No".into()
+    }
 }
 
 fn format_float(value: f64) -> String {

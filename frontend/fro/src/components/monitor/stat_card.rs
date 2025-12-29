@@ -20,7 +20,7 @@ pub struct StatCardProps {
 #[component]
 pub fn StatCard(props: StatCardProps) -> Element {
     let has_description = props.description.is_some();
-    
+
     rsx! {
         div {
             class: "rounded p-4 bg-gray-800 border border-gray-700 relative",

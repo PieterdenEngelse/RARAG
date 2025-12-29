@@ -2,14 +2,21 @@
 // LLM Provider abstraction - pluggable architecture
 // Default: Phi 3.5 via Ollama
 
+use crate::db::llm_settings::{self, LlmConfig};
 use serde::{Deserialize, Serialize};
 use tracing::{debug, info, warn};
 
 /// LLM Provider trait - implement this to support new models
 #[async_trait::async_trait]
-
 pub trait LLMProvider: Send + Sync {
+    /// Generate text with default settings from global config
     async fn generate(&self, prompt: &str) -> Result<String, LLMError>;
+    /// Generate text with custom settings
+    async fn generate_with_config(
+        &self,
+        prompt: &str,
+        config: &LlmConfig,
+    ) -> Result<String, LLMError>;
     fn model_name(&self) -> &str;
 }
 
@@ -64,11 +71,52 @@ pub struct OllamaProvider {
     client: reqwest::Client,
 }
 
+/// Ollama API options for generation parameters
+#[derive(Serialize, Default)]
+struct OllamaOptions {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    temperature: Option<f32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    top_p: Option<f32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    top_k: Option<i32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    repeat_penalty: Option<f32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    frequency_penalty: Option<f32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    presence_penalty: Option<f32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    num_predict: Option<i32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    seed: Option<i64>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    stop: Vec<String>,
+}
+
+impl From<&LlmConfig> for OllamaOptions {
+    fn from(cfg: &LlmConfig) -> Self {
+        Self {
+            temperature: Some(cfg.temperature),
+            top_p: Some(cfg.top_p),
+            top_k: Some(cfg.top_k as i32),
+            repeat_penalty: Some(cfg.repeat_penalty),
+            frequency_penalty: Some(cfg.frequency_penalty),
+            presence_penalty: Some(cfg.presence_penalty),
+            num_predict: Some(cfg.max_tokens as i32),
+            seed: cfg.seed,
+            stop: cfg.stop_sequences.clone(),
+        }
+    }
+}
+
 #[derive(Serialize)]
 struct OllamaRequest {
     model: String,
     prompt: String,
     stream: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    options: Option<OllamaOptions>,
 }
 
 #[derive(Deserialize)]
@@ -97,7 +145,25 @@ impl OllamaProvider {
 #[async_trait::async_trait]
 impl LLMProvider for OllamaProvider {
     async fn generate(&self, prompt: &str) -> Result<String, LLMError> {
-        debug!(model = %self.model, prompt_len = prompt.len(), "Generating with Ollama");
+        // Use global config for default generation
+        let config = llm_settings::global_config();
+        self.generate_with_config(prompt, &config).await
+    }
+
+    async fn generate_with_config(
+        &self,
+        prompt: &str,
+        config: &LlmConfig,
+    ) -> Result<String, LLMError> {
+        debug!(
+            model = %self.model,
+            prompt_len = prompt.len(),
+            temperature = config.temperature,
+            top_p = config.top_p,
+            top_k = config.top_k,
+            max_tokens = config.max_tokens,
+            "Generating with Ollama"
+        );
 
         // Check connection first
         if let Err(e) = self.health_check().await {
@@ -106,10 +172,12 @@ impl LLMProvider for OllamaProvider {
         }
 
         let url = format!("{}/api/generate", self.url);
+        let options = OllamaOptions::from(config);
         let req = OllamaRequest {
             model: self.model.clone(),
             prompt: prompt.to_string(),
             stream: false,
+            options: Some(options),
         };
 
         let response = self
@@ -125,7 +193,12 @@ impl LLMProvider for OllamaProvider {
             .await
             .map_err(|e| LLMError::InvalidResponse(e.to_string()))?;
 
-        info!(model = %self.model, response_len = ollama_resp.response.len(), "Generation complete");
+        info!(
+            model = %self.model,
+            response_len = ollama_resp.response.len(),
+            temperature = config.temperature,
+            "Generation complete"
+        );
         Ok(ollama_resp.response.trim().to_string())
     }
 
@@ -184,8 +257,10 @@ mod tests {
 
     #[test]
     fn test_ollama_provider_creation() {
-        let provider =
-            OllamaProvider::new("http://localhost:11434".to_string(), "phi:latest".to_string());
+        let provider = OllamaProvider::new(
+            "http://localhost:11434".to_string(),
+            "phi:latest".to_string(),
+        );
         assert_eq!(provider.model_name(), "phi:latest");
     }
 

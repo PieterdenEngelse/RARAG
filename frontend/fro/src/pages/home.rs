@@ -1,13 +1,13 @@
+use crate::api;
 use dioxus::prelude::*;
 use serde::{Deserialize, Serialize};
 use wasm_bindgen::JsCast;
-use crate::api;
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct ChatMessage {
-    pub role: String,      // "user" or "assistant"
+    pub role: String, // "user" or "assistant"
     pub content: String,
-    pub context: Option<String>,  // RAG context used (if any)
+    pub context: Option<String>, // RAG context used (if any)
 }
 
 #[derive(Serialize)]
@@ -34,23 +34,21 @@ pub fn Home() -> Element {
     let mut is_loading = use_signal(|| false);
     let mut error_msg = use_signal(|| Option::<String>::None);
     let mut selected_model = use_signal(|| "phi:latest".to_string());
-    
+
     // File upload state
     let mut show_upload_panel = use_signal(|| false);
     let mut documents = use_signal(|| Vec::<String>::new());
     let mut upload_status = use_signal(|| Option::<String>::None);
     let mut is_uploading = use_signal(|| false);
-    
+
     // RAG toggle
     let mut rag_enabled = use_signal(|| true);
-    
+
     // Info panel state
     let mut show_info = use_signal(|| false);
 
     // Models actually installed in Ollama
-    let available_models = vec![
-        "phi:latest",
-    ];
+    let available_models = vec!["phi:latest"];
 
     // Load documents on mount
     use_effect(move || {
@@ -72,14 +70,14 @@ pub fn Home() -> Element {
         match api::search(query).await {
             Ok(response) if !response.results.is_empty() => {
                 let results: Vec<_> = response.results.iter().take(3).collect();
-                
+
                 // Build context for LLM
                 let context: String = results
                     .iter()
                     .map(|r| format!("[From {}]: {}", r.document, r.content))
                     .collect::<Vec<_>>()
                     .join("\n\n");
-                
+
                 // Build user-friendly summary
                 let context_summary: String = results
                     .iter()
@@ -87,7 +85,7 @@ pub fn Home() -> Element {
                     .map(|(i, r)| format!("{}. {} (score: {:.2})", i + 1, r.document, r.score))
                     .collect::<Vec<_>>()
                     .join("\n");
-                
+
                 let prompt = format!(
                     "Use the following context to answer the question. If the context doesn't contain relevant information, answer based on your knowledge.\n\n\
                     Context:\n{}\n\n\
@@ -96,7 +94,7 @@ pub fn Home() -> Element {
                     context,
                     query
                 );
-                
+
                 (prompt, Some(context_summary))
             }
             _ => (query.to_string(), None),
@@ -304,11 +302,11 @@ pub fn Home() -> Element {
                                             .unwrap()
                                             .dyn_into()
                                             .unwrap();
-                                        
+
                                         if let Some(files) = input.files() {
                                             if let Some(file) = files.get(0) {
                                                 let filename = file.name();
-                                                
+
                                                 // Read file content
                                                 let array_buffer = wasm_bindgen_futures::JsFuture::from(file.array_buffer())
                                                     .await
@@ -466,7 +464,7 @@ pub fn Home() -> Element {
                                         "Ask questions using Ollama."
                                     }
                                 }
-                                
+
                                 // Document count indicator
                                 if !documents().is_empty() && rag_enabled() {
                                     div {
@@ -529,7 +527,7 @@ pub fn Home() -> Element {
                                     class: "whitespace-pre-wrap font-sans",
                                     "{msg.content}"
                                 }
-                                
+
                                 // Show RAG context if available (for assistant messages)
                                 if msg.role == "assistant" {
                                     if let Some(ctx) = &msg.context {
@@ -691,23 +689,23 @@ pub fn Home() -> Element {
                 div {
                     class: "fixed inset-0 bg-black/50 flex items-center justify-center z-50",
                     onclick: move |_| show_info.set(false),
-                    
+
                     div {
                         class: "bg-base-100 rounded-2xl p-5 sm:p-6 max-w-7xl w-full mx-2 sm:mx-4 shadow-2xl max-h-[90vh] flex flex-col gap-4",
                         onclick: move |evt| evt.stop_propagation(),
-                        
+
                         div {
                             class: "flex-1 overflow-y-auto space-y-2.5 pr-0 sm:pr-1",
-                            
+
                             h3 {
                                 class: "text-lg font-bold leading-tight",
                                 style: "color: #0D98BA;",
                                 if rag_enabled() { "📚 RAG is ON" } else { "💬 RAG is OFF" }
                             }
-                            
+
                             div {
                                 class: "grid gap-3.5 lg:gap-5 lg:grid-cols-[minmax(0,1fr)_minmax(0,1.1fr)] text-sm",
-                                
+
                                 // Column: RAG behavior + current config snapshot
                                 div {
                                     class: "space-y-2",
@@ -909,7 +907,7 @@ pub fn Home() -> Element {
                                 "Model: {selected_model}"
                             }
                         }
-                        
+
                         button {
                             class: "btn btn-sm w-full mt-0.5 text-base",
                             style: "background-color: #0D98BA; color: white; font-size: 1.25rem;",

@@ -1,0 +1,313 @@
+use chrono::Utc;
+use rusqlite::{params, Connection, OptionalExtension};
+use serde::{Deserialize, Serialize};
+use std::sync::{OnceLock, RwLock};
+use thiserror::Error;
+
+// Default values
+pub const DEFAULT_TEMPERATURE: f32 = 0.7;
+pub const DEFAULT_TOP_P: f32 = 0.95;
+pub const DEFAULT_TOP_K: usize = 40;
+pub const DEFAULT_MAX_TOKENS: usize = 1024;
+pub const DEFAULT_REPEAT_PENALTY: f32 = 1.1;
+pub const DEFAULT_FREQUENCY_PENALTY: f32 = 0.0;
+pub const DEFAULT_PRESENCE_PENALTY: f32 = 0.0;
+
+static GLOBAL_LLM_CONFIG: OnceLock<RwLock<LlmConfig>> = OnceLock::new();
+
+static CONFIG_KEYS: LlmConfigKeys = LlmConfigKeys {
+    temperature: "llm_temperature",
+    top_p: "llm_top_p",
+    top_k: "llm_top_k",
+    max_tokens: "llm_max_tokens",
+    repeat_penalty: "llm_repeat_penalty",
+    frequency_penalty: "llm_frequency_penalty",
+    presence_penalty: "llm_presence_penalty",
+    stop_sequences: "llm_stop_sequences",
+    seed: "llm_seed",
+};
+
+struct LlmConfigKeys {
+    temperature: &'static str,
+    top_p: &'static str,
+    top_k: &'static str,
+    max_tokens: &'static str,
+    repeat_penalty: &'static str,
+    frequency_penalty: &'static str,
+    presence_penalty: &'static str,
+    stop_sequences: &'static str,
+    seed: &'static str,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct LlmConfig {
+    pub temperature: f32,
+    pub top_p: f32,
+    pub top_k: usize,
+    pub max_tokens: usize,
+    pub repeat_penalty: f32,
+    pub frequency_penalty: f32,
+    pub presence_penalty: f32,
+    pub stop_sequences: Vec<String>,
+    pub seed: Option<i64>,
+}
+
+impl Default for LlmConfig {
+    fn default() -> Self {
+        Self {
+            temperature: DEFAULT_TEMPERATURE,
+            top_p: DEFAULT_TOP_P,
+            top_k: DEFAULT_TOP_K,
+            max_tokens: DEFAULT_MAX_TOKENS,
+            repeat_penalty: DEFAULT_REPEAT_PENALTY,
+            frequency_penalty: DEFAULT_FREQUENCY_PENALTY,
+            presence_penalty: DEFAULT_PRESENCE_PENALTY,
+            stop_sequences: Vec::new(),
+            seed: None,
+        }
+    }
+}
+
+#[derive(Debug, Error)]
+pub enum LlmConfigError {
+    #[error("database error: {0}")]
+    Database(String),
+    #[error("invalid value for {key}: {message}")]
+    InvalidValue { key: String, message: String },
+}
+
+type Result<T> = std::result::Result<T, LlmConfigError>;
+
+fn config_lock() -> &'static RwLock<LlmConfig> {
+    GLOBAL_LLM_CONFIG.get_or_init(|| RwLock::new(LlmConfig::default()))
+}
+
+pub fn global_config() -> LlmConfig {
+    config_lock().read().unwrap().clone()
+}
+
+pub fn load_active_config(conn: &Connection) {
+    let cfg = load_llm_config(conn).expect("failed to load LLM settings");
+    *config_lock().write().unwrap() = cfg;
+}
+
+pub fn load_llm_config(conn: &Connection) -> Result<LlmConfig> {
+    let temperature = read_float(conn, CONFIG_KEYS.temperature)?
+        .map(|v| v as f32)
+        .unwrap_or(DEFAULT_TEMPERATURE);
+    let top_p = read_float(conn, CONFIG_KEYS.top_p)?
+        .map(|v| v as f32)
+        .unwrap_or(DEFAULT_TOP_P);
+    let top_k = read_int(conn, CONFIG_KEYS.top_k)?
+        .map(|v| v as usize)
+        .unwrap_or(DEFAULT_TOP_K);
+    let max_tokens = read_int(conn, CONFIG_KEYS.max_tokens)?
+        .map(|v| v as usize)
+        .unwrap_or(DEFAULT_MAX_TOKENS);
+    let repeat_penalty = read_float(conn, CONFIG_KEYS.repeat_penalty)?
+        .map(|v| v as f32)
+        .unwrap_or(DEFAULT_REPEAT_PENALTY);
+    let frequency_penalty = read_float(conn, CONFIG_KEYS.frequency_penalty)?
+        .map(|v| v as f32)
+        .unwrap_or(DEFAULT_FREQUENCY_PENALTY);
+    let presence_penalty = read_float(conn, CONFIG_KEYS.presence_penalty)?
+        .map(|v| v as f32)
+        .unwrap_or(DEFAULT_PRESENCE_PENALTY);
+    let stop_sequences = read_value(conn, CONFIG_KEYS.stop_sequences)?
+        .map(|v| serde_json::from_str(&v).unwrap_or_default())
+        .unwrap_or_default();
+    let seed = read_int(conn, CONFIG_KEYS.seed)?;
+
+    Ok(LlmConfig {
+        temperature,
+        top_p,
+        top_k,
+        max_tokens,
+        repeat_penalty,
+        frequency_penalty,
+        presence_penalty,
+        stop_sequences,
+        seed,
+    })
+}
+
+pub fn save_llm_config(conn: &Connection, cfg: &LlmConfig) -> Result<()> {
+    conn.execute("BEGIN TRANSACTION", []).map_err(db_err)?;
+
+    write_value(conn, CONFIG_KEYS.temperature, cfg.temperature.to_string())?;
+    write_value(conn, CONFIG_KEYS.top_p, cfg.top_p.to_string())?;
+    write_value(conn, CONFIG_KEYS.top_k, cfg.top_k.to_string())?;
+    write_value(conn, CONFIG_KEYS.max_tokens, cfg.max_tokens.to_string())?;
+    write_value(
+        conn,
+        CONFIG_KEYS.repeat_penalty,
+        cfg.repeat_penalty.to_string(),
+    )?;
+    write_value(
+        conn,
+        CONFIG_KEYS.frequency_penalty,
+        cfg.frequency_penalty.to_string(),
+    )?;
+    write_value(
+        conn,
+        CONFIG_KEYS.presence_penalty,
+        cfg.presence_penalty.to_string(),
+    )?;
+    write_value(
+        conn,
+        CONFIG_KEYS.stop_sequences,
+        serde_json::to_string(&cfg.stop_sequences).unwrap_or_default(),
+    )?;
+
+    if let Some(seed) = cfg.seed {
+        write_value(conn, CONFIG_KEYS.seed, seed.to_string())?;
+    } else {
+        delete_value(conn, CONFIG_KEYS.seed)?;
+    }
+
+    conn.execute("COMMIT", []).map_err(db_err)?;
+    *config_lock().write().unwrap() = cfg.clone();
+    Ok(())
+}
+
+pub fn save_llm_config_default_db(cfg: &LlmConfig) -> Result<()> {
+    let path = super::chunk_settings::get_db_path().expect("DB path not initialized");
+    let conn = Connection::open(path).map_err(db_err)?;
+    save_llm_config(&conn, cfg)
+}
+
+fn read_int(conn: &Connection, key: &str) -> Result<Option<i64>> {
+    read_value(conn, key)?
+        .map(|v| parse_int(key, &v))
+        .transpose()
+}
+
+fn read_float(conn: &Connection, key: &str) -> Result<Option<f64>> {
+    read_value(conn, key)?
+        .map(|v| parse_float(key, &v))
+        .transpose()
+}
+
+fn read_value(conn: &Connection, key: &str) -> Result<Option<String>> {
+    let value: Option<String> = conn
+        .query_row("SELECT value FROM config WHERE key = ?1", [key], |row| {
+            row.get::<_, String>(0)
+        })
+        .optional()
+        .map_err(db_err)?;
+    Ok(value)
+}
+
+fn write_value(conn: &Connection, key: &str, value: String) -> Result<()> {
+    let now = Utc::now().to_rfc3339();
+    conn.execute(
+        "INSERT INTO config(key, value, value_type, description, updated_at)
+         VALUES(?1, ?2, 'string', NULL, ?3)
+         ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at",
+        params![key, value, now],
+    )
+    .map_err(db_err)?;
+    Ok(())
+}
+
+fn delete_value(conn: &Connection, key: &str) -> Result<()> {
+    conn.execute("DELETE FROM config WHERE key = ?1", [key])
+        .map_err(db_err)?;
+    Ok(())
+}
+
+fn parse_int(key: &str, value: &str) -> Result<i64> {
+    value
+        .parse::<i64>()
+        .map_err(|e| LlmConfigError::InvalidValue {
+            key: key.to_string(),
+            message: format!("{}", e),
+        })
+}
+
+fn parse_float(key: &str, value: &str) -> Result<f64> {
+    value
+        .parse::<f64>()
+        .map_err(|e| LlmConfigError::InvalidValue {
+            key: key.to_string(),
+            message: format!("{}", e),
+        })
+}
+
+fn db_err<E: std::fmt::Display>(err: E) -> LlmConfigError {
+    LlmConfigError::Database(err.to_string())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn setup_conn() -> Connection {
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute(
+            "CREATE TABLE config (
+                key TEXT PRIMARY KEY,
+                value TEXT NOT NULL,
+                value_type TEXT,
+                description TEXT,
+                updated_at TEXT DEFAULT CURRENT_TIMESTAMP
+            )",
+            [],
+        )
+        .unwrap();
+        conn
+    }
+
+    #[test]
+    fn load_returns_defaults_when_empty() {
+        let conn = setup_conn();
+        let cfg = load_llm_config(&conn).unwrap();
+        assert!((cfg.temperature - DEFAULT_TEMPERATURE).abs() < f32::EPSILON);
+        assert!((cfg.top_p - DEFAULT_TOP_P).abs() < f32::EPSILON);
+        assert_eq!(cfg.top_k, DEFAULT_TOP_K);
+        assert_eq!(cfg.max_tokens, DEFAULT_MAX_TOKENS);
+        assert!((cfg.repeat_penalty - DEFAULT_REPEAT_PENALTY).abs() < f32::EPSILON);
+        assert!(cfg.seed.is_none());
+    }
+
+    #[test]
+    fn save_then_load_roundtrip() {
+        let conn = setup_conn();
+        let cfg = LlmConfig {
+            temperature: 0.5,
+            top_p: 0.9,
+            top_k: 50,
+            max_tokens: 2048,
+            repeat_penalty: 1.2,
+            seed: Some(42),
+        };
+        save_llm_config(&conn, &cfg).unwrap();
+        let loaded = load_llm_config(&conn).unwrap();
+        assert!((loaded.temperature - 0.5).abs() < f32::EPSILON);
+        assert!((loaded.top_p - 0.9).abs() < f32::EPSILON);
+        assert_eq!(loaded.top_k, 50);
+        assert_eq!(loaded.max_tokens, 2048);
+        assert!((loaded.repeat_penalty - 1.2).abs() < f32::EPSILON);
+        assert_eq!(loaded.seed, Some(42));
+    }
+
+    #[test]
+    fn save_with_none_seed() {
+        let conn = setup_conn();
+        let cfg = LlmConfig {
+            seed: Some(123),
+            ..Default::default()
+        };
+        save_llm_config(&conn, &cfg).unwrap();
+
+        // Now save with None seed
+        let cfg2 = LlmConfig {
+            seed: None,
+            ..Default::default()
+        };
+        save_llm_config(&conn, &cfg2).unwrap();
+
+        let loaded = load_llm_config(&conn).unwrap();
+        assert!(loaded.seed.is_none());
+    }
+}

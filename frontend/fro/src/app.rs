@@ -1,7 +1,8 @@
 use crate::components::header::Header;
 use crate::pages::{
-    About, Config, Home, MonitorCache, MonitorIndex, MonitorLogs, MonitorOverview, MonitorRateLimits,
-    MonitorRequests, PageNotFound,
+    About, Config, ConfigHardware, ConfigOther, ConfigPrompt, ConfigSampling, Home, MonitorCache,
+    MonitorIndex, MonitorLogs, MonitorOverview, MonitorRateLimits, MonitorRequests, PageNotFound,
+    Parameters,
 };
 use dioxus::prelude::*;
 use dioxus_router::prelude::*;
@@ -18,6 +19,16 @@ pub enum Route {
         MonitorOverview {},
         #[route("/config")]
         Config {},
+        #[route("/config/parameters")]
+        Parameters {},
+        #[route("/config/sampling")]
+        ConfigSampling {},
+        #[route("/config/prompt")]
+        ConfigPrompt {},
+        #[route("/config/hardware")]
+        ConfigHardware {},
+        #[route("/config/other")]
+        ConfigOther {},
         #[route("/monitor/requests")]
         MonitorRequests {},
         #[route("/monitor/cache")]
@@ -75,7 +86,7 @@ fn Layout() -> Element {
         div {
             class: "min-h-screen transition-colors bg-white dark:bg-gray-900 text-gray-900 dark:text-white",
 
-            Header {}
+            Header {},
 
             main {
                 Outlet::<Route> {}

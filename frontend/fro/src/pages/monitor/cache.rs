@@ -295,5 +295,9 @@ fn copy_command_to_clipboard(command: &str) {
 }
 
 fn yes_no(flag: bool) -> String {
-    if flag { "Yes".into() } else { "No".into() }
+    if flag {
+        "Yes".into()
+    } else {
+        "No".into()
+    }
 }

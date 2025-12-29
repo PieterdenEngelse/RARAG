@@ -5,8 +5,8 @@ use std::sync::{OnceLock, RwLock};
 use thiserror::Error;
 
 use crate::memory::chunker::{
-    ChunkerConfig, DEFAULT_MAX_SIZE, DEFAULT_MIN_SIZE, DEFAULT_OVERLAP, DEFAULT_TARGET_SIZE,
-    DEFAULT_SEMANTIC_SIMILARITY_THRESHOLD,
+    ChunkerConfig, DEFAULT_MAX_SIZE, DEFAULT_MIN_SIZE, DEFAULT_OVERLAP,
+    DEFAULT_SEMANTIC_SIMILARITY_THRESHOLD, DEFAULT_TARGET_SIZE,
 };
 
 static GLOBAL_CHUNK_CONFIG: OnceLock<RwLock<ChunkerConfig>> = OnceLock::new();
@@ -50,6 +50,10 @@ pub fn set_global_db_path(path: PathBuf) {
     let _ = DB_PATH.set(path);
 }
 
+pub fn get_db_path() -> Option<PathBuf> {
+    DB_PATH.get().cloned()
+}
+
 pub fn load_active_config(conn: &Connection) {
     let cfg = load_chunker_config(conn).expect("failed to load chunk settings");
     *config_lock().write().unwrap() = cfg;
@@ -74,8 +78,7 @@ pub fn load_chunker_config(conn: &Connection) -> Result<ChunkerConfig> {
 }
 
 pub fn save_chunker_config(conn: &Connection, cfg: &ChunkerConfig) -> Result<()> {
-    conn.execute("BEGIN TRANSACTION", [])
-        .map_err(db_err)?;
+    conn.execute("BEGIN TRANSACTION", []).map_err(db_err)?;
 
     write_value(conn, CONFIG_KEYS.target, cfg.target_size.to_string())?;
     write_value(conn, CONFIG_KEYS.min, cfg.min_size.to_string())?;
@@ -102,20 +105,22 @@ pub fn save_chunker_config_default_db(cfg: &ChunkerConfig) -> Result<()> {
 }
 
 fn read_int(conn: &Connection, key: &str) -> Result<Option<i64>> {
-    read_value(conn, key)?.map(|v| parse_int(key, &v)).transpose()
+    read_value(conn, key)?
+        .map(|v| parse_int(key, &v))
+        .transpose()
 }
 
 fn read_float(conn: &Connection, key: &str) -> Result<Option<f64>> {
-    read_value(conn, key)?.map(|v| parse_float(key, &v)).transpose()
+    read_value(conn, key)?
+        .map(|v| parse_float(key, &v))
+        .transpose()
 }
 
 fn read_value(conn: &Connection, key: &str) -> Result<Option<String>> {
     let value: Option<String> = conn
-        .query_row(
-            "SELECT value FROM config WHERE key = ?1",
-            [key],
-            |row| row.get::<_, String>(0),
-        )
+        .query_row("SELECT value FROM config WHERE key = ?1", [key], |row| {
+            row.get::<_, String>(0)
+        })
         .optional()
         .map_err(db_err)?;
     Ok(value)
@@ -134,17 +139,21 @@ fn write_value(conn: &Connection, key: &str, value: String) -> Result<()> {
 }
 
 fn parse_int(key: &str, value: &str) -> Result<i64> {
-    value.parse::<i64>().map_err(|e| ChunkConfigError::InvalidValue {
-        key: key.to_string(),
-        message: format!("{}", e),
-    })
+    value
+        .parse::<i64>()
+        .map_err(|e| ChunkConfigError::InvalidValue {
+            key: key.to_string(),
+            message: format!("{}", e),
+        })
 }
 
 fn parse_float(key: &str, value: &str) -> Result<f64> {
-    value.parse::<f64>().map_err(|e| ChunkConfigError::InvalidValue {
-        key: key.to_string(),
-        message: format!("{}", e),
-    })
+    value
+        .parse::<f64>()
+        .map_err(|e| ChunkConfigError::InvalidValue {
+            key: key.to_string(),
+            message: format!("{}", e),
+        })
 }
 
 fn db_err<E: std::fmt::Display>(err: E) -> ChunkConfigError {
@@ -179,7 +188,10 @@ mod tests {
         assert_eq!(cfg.min_size, DEFAULT_MIN_SIZE);
         assert_eq!(cfg.max_size, DEFAULT_MAX_SIZE);
         assert_eq!(cfg.overlap, DEFAULT_OVERLAP);
-        assert!((cfg.semantic_similarity_threshold - DEFAULT_SEMANTIC_SIMILARITY_THRESHOLD).abs() < f32::EPSILON);
+        assert!(
+            (cfg.semantic_similarity_threshold - DEFAULT_SEMANTIC_SIMILARITY_THRESHOLD).abs()
+                < f32::EPSILON
+        );
     }
 
     #[test]

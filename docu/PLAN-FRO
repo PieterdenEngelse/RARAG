@@ -1253,3 +1253,145 @@ The changes made:
     frontend/fro/src/pages/monitor/index_page.rs: Changed the Upload button to a hidden file input with a label, triggering file selection and upload on change
 
 You may need to restart the dev server for the Cargo.toml changes to take effect. Would you like me to add any visual feedback (like a loading state or success message) when files are being uploaded?
+
+
+De 6 Aanpasbare LLM Model Parameters
+Op basis van de project files en eerdere conversaties, zijn dit de 6 algemene aanpasbare parameters voor het LLM model (Ollama/Phi):
+#ParameterTypeBeschrijvingStandaard1temperaturef32Creativiteit (0.0-2.0) - hoger = meer creatief0.72top_pf32Nucleus sampling - controleert diversiteit (0.0-1.0)0.953top_kusizeAantal tokens om te overwegen per stap(Ollama default)4max_tokens / num_predictusizeMaximum tokens om te genereren10245repeat_penaltyf32Herhaling penalty (1.0 = geen penalty)1.16seedOption<i64>Random seed voor reproduceerbare outputNone
+
+In de Code (LLMConfig struct)
+Dit is wat je in src/memory/llm_provider.rs hebt (of zou moeten hebben):
+
+
+    temperature - Controls randomness (0.0-2.0)
+    top_p - Nucleus sampling threshold (0.0-1.0)
+    top_k - Limits vocabulary to top K tokens
+    num_ctx - Context window size
+    repeat_penalty - Penalizes repetition
+    seed - Random seed for reproducibility
+
+Or alternatively:
+
+    temperature
+    top_p
+    top_k
+    max_tokens - Maximum output tokens
+    presence_penalty - Penalizes new topics
+    frequency_penalty - Penalizes frequent tokens
+
+    Ollama heeft **meer parameters dan de meeste mensen denken**, maar het goede nieuws is dat ze allemaal netjes gegroepeerd zijn. Er is geen officiële “totaaltelling” omdat het per model en per versie licht kan verschillen, maar **de kern‑API ondersteunt ongeveer 20–25 parameters** die je als gebruiker kunt instellen.
+
+Hier is een **volledig en actueel overzicht** van de parameters die Ollama ondersteunt in zijn `options`‑blok, plus de prompt‑velden erbuiten. Dit is de lijst die je in de praktijk kunt gebruiken.
+
+---
+
+# **📦 Ollama parameters (volledig overzicht)**
+
+## **1. Prompt‑velden (buiten `options`)**
+Deze bepalen de rol en inhoud van de prompt:
+
+- `model`
+- `prompt`
+- `system`
+- `template`
+- `context` (voor conversation state)
+- `images` (bij multimodal modellen)
+- `stream` (true/false)
+
+---
+
+## **2. Sampling‑parameters**
+Deze bepalen hoe tokens worden gekozen:
+
+- `temperature`
+- `top_p`
+- `top_k`
+- `min_p`
+- `repeat_penalty`
+- `repeat_last_n`
+- `seed`
+- `mirostat`
+- `mirostat_eta`
+- `mirostat_tau`
+- `tfs_z` (Tail Free Sampling)
+- `typical_p`
+
+---
+
+## **3. Token‑limieten en context**
+Deze bepalen hoeveel tokens het model mag gebruiken:
+
+- `num_ctx` (context window)
+- `num_predict` (max tokens to generate)
+- `num_keep` (tokens to keep fixed)
+- `max_tokens` (alias in sommige clients)
+
+---
+
+## **4. Performance / hardware parameters**
+Deze bepalen hoe het model draait:
+
+- `num_thread`
+- `num_gpu`
+- `gpu_layers`
+- `main_gpu`
+- `low_vram`
+- `f16_kv`
+- `rope_frequency_base`
+- `rope_frequency_scale`
+
+---
+
+## **5. Geavanceerde parameters**
+Deze zijn minder bekend maar bestaan wel:
+
+- `stop` (lijst van stop tokens)
+- `stop_sequences`
+- `grammar` (structured output)
+- `logit_bias` (token‑biasing)
+- `embedding_only`
+- `clip_skip` (bij sommige modellen)
+- `draft_model` (bij speculative decoding)
+
+---
+
+# **📊 Totaal aantal parameters**
+Als je alles optelt:
+
+- Prompt‑velden: ~7  
+- Sampling parameters: ~12  
+- Context/token parameters: ~4  
+- Hardware parameters: ~8  
+- Advanced parameters: ~5  
+
+**Totaal: ± 30 parameters**  
+(afhankelijk van modeltype en Ollama‑versie)
+
+Dat is dus de realistische, volledige set.
+
+---
+
+# **🌱 Wat jij hiervan écht nodig hebt**
+Voor een lokaal systeem met één gebruiker (zoals jij):
+
+### **Essentieel**
+- `system`
+- `temperature`
+- `top_p`
+- `seed`
+- `num_ctx`
+- `num_predict`
+
+### **Handig**
+- `repeat_penalty`
+- `stop`
+- `logit_bias`
+
+### **Geavanceerd**
+- `mirostat`
+- `rope_frequency_scale`
+- `draft_model`
+
+---
+
+Als je wilt, kan ik een **compacte tabel** maken met alle parameters, hun functie, default waarde en wanneer je ze moet gebruiken — ideaal voor jouw documentatie‑stijl met tabellen en duidelijke structuur.

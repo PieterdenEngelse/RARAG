@@ -6,9 +6,9 @@ pub fn DarkModeToggle() -> Element {
     let mut is_dark = use_context::<Signal<bool>>();
 
     let button_class = if is_dark() {
-        "p-2 rounded-lg transition-all cursor-pointer bg-gray-700 text-gray-200 hover:bg-gray-600"
+        "inline-flex items-center justify-center h-8 w-8 text-sm rounded-full transition-all cursor-pointer bg-gray-700 text-gray-200 hover:bg-gray-600"
     } else {
-        "p-2 rounded-lg transition-all cursor-pointer bg-gray-200 text-gray-800 hover:bg-gray-300"
+        "inline-flex items-center justify-center h-8 w-8 text-sm rounded-full transition-all cursor-pointer bg-gray-200 text-gray-800 hover:bg-gray-300"
     };
 
     rsx! {
@@ -21,9 +21,9 @@ pub fn DarkModeToggle() -> Element {
             class: "{button_class}",
 
             if is_dark() {
-                "☀️ Light"
+                "☀️"
             } else {
-                "🌙 Dark"
+                "🌙"
             }
         }
     }

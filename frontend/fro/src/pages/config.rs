@@ -1,5 +1,6 @@
-use crate::{api, app::Route, components::monitor::*};
+use crate::{api, app::Route, components::config_nav::{ConfigNav, ConfigTab}, components::monitor::*};
 use dioxus::prelude::*;
+
 
 #[derive(Clone, Debug)]
 struct ChunkPreset {
@@ -141,6 +142,12 @@ pub fn Config() -> Element {
                     BreadcrumbItem::new("Home", Some(Route::Home {})),
                     BreadcrumbItem::new("Config", Some(Route::Config {})),
                 ],
+            }
+
+            ConfigNav { active: ConfigTab::Home }
+
+            Panel { title: Some("Config sections".into()), refresh: None,
+                div { class: "text-sm text-gray-300", "Use these tabs to open dedicated views for Sampling, Prompt, Hardware & performance, or Other settings while keeping this overview intact." }
             }
 
             RowHeader {

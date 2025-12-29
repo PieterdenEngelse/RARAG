@@ -113,6 +113,7 @@ async fn main() -> std::io::Result<()> {
 
     ag::db::chunk_settings::set_global_db_path(pm.db_path("documents"));
     ag::db::chunk_settings::load_active_config(&_db_conn);
+    ag::db::llm_settings::load_active_config(&_db_conn);
 
     // ─────────────────────────────────────────────────────────────
     // PHASE 4: Initialize Retriever with PathManager

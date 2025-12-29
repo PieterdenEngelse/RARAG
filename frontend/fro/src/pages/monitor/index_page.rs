@@ -130,16 +130,18 @@ pub fn MonitorIndex() -> Element {
                         snapshot.chunking_logging_enabled = Some(resp.logging_enabled);
                         snapshot.chunking_logging_message = Some(format!(
                             "Logging {}",
-                            if resp.logging_enabled { "enabled" } else { "disabled" }
+                            if resp.logging_enabled {
+                                "enabled"
+                            } else {
+                                "disabled"
+                            }
                         ));
                     }
                     Err(err) => {
                         let mut snapshot = state.write();
                         snapshot.chunking_logging_enabled = None;
-                        snapshot.chunking_logging_message = Some(format!(
-                            "Failed to load logging status: {}",
-                            err
-                        ));
+                        snapshot.chunking_logging_message =
+                            Some(format!("Failed to load logging status: {}", err));
                     }
                 }
 
@@ -154,7 +156,7 @@ pub fn MonitorIndex() -> Element {
         use_future(move || async move {
             loop {
                 refresh_job_statuses(jobs.clone(), state.clone(), false).await;
-                
+
                 // Poll faster (2s) when there's an active job, slower (5s) when idle
                 let has_active_job = {
                     let guard = jobs.read();
@@ -214,13 +216,14 @@ pub fn MonitorIndex() -> Element {
                             rows.insert(0, ReindexJobRow::placeholder(&resp));
                         }
 
-                        state.write().status_message = Some(format!(
-                            "Async job {} accepted",
-                            resp.job_id
-                        ));
+                        state.write().status_message =
+                            Some(format!("Async job {} accepted", resp.job_id));
 
-                        if let Err(err) = refresh_single_job(resp.job_id, jobs.clone(), state.clone()).await {
-                            state.write().status_message = Some(format!("Failed to fetch async status: {}", err));
+                        if let Err(err) =
+                            refresh_single_job(resp.job_id, jobs.clone(), state.clone()).await
+                        {
+                            state.write().status_message =
+                                Some(format!("Failed to fetch async status: {}", err));
                         }
                     }
                     Err(err) => {
@@ -570,11 +573,11 @@ pub fn MonitorIndex() -> Element {
                                                 if let Some(file_engine) = evt.files() {
                                                     let files = file_engine.files();
                                                     let total = files.len();
-                                                    
+
                                                     if total == 0 {
                                                         return;
                                                     }
-                                                    
+
                                                     // Start upload
                                                     {
                                                         let mut s = state.write();
@@ -585,7 +588,7 @@ pub fn MonitorIndex() -> Element {
                                                         s.upload_current_file = None;
                                                         s.upload_message = Some(format!("Starting upload of {} file(s)...", total));
                                                     }
-                                                    
+
                                                     for file_name in files {
                                                         // Update current file
                                                         {
@@ -593,7 +596,7 @@ pub fn MonitorIndex() -> Element {
                                                             s.upload_current_file = Some(file_name.clone());
                                                             s.upload_message = Some(format!("Uploading: {}", file_name));
                                                         }
-                                                        
+
                                                         if let Some(file_data) = file_engine.read_file(&file_name).await {
                                                             match api::upload_document(&file_name, &file_data).await {
                                                                 Ok(_) => {
@@ -611,7 +614,7 @@ pub fn MonitorIndex() -> Element {
                                                             s.upload_failed_files += 1;
                                                         }
                                                     }
-                                                    
+
                                                     // Complete
                                                     {
                                                         let mut s = state.write();
@@ -820,19 +823,19 @@ fn CopyButton(props: CopyButtonProps) -> Element {
 fn render_progress_monitor(job: &ReindexJobRow) -> Element {
     // Determine current phase based on status
     let (phase, progress_percent) = match job.status.as_str() {
-        "accepted" => (0, 5),      // Just started - Scanning
-        "running" => (1, 50),      // In progress - Processing  
-        "completed" => (3, 100),   // Done
-        "failed" => (3, 100),      // Failed (show full bar in red)
+        "accepted" => (0, 5),    // Just started - Scanning
+        "running" => (1, 50),    // In progress - Processing
+        "completed" => (3, 100), // Done
+        "failed" => (3, 100),    // Failed (show full bar in red)
         _ => (0, 0),
     };
-    
+
     let is_failed = job.status == "failed";
     let is_running = matches!(job.status.as_str(), "accepted" | "running");
-    
+
     // Phase labels
     let phases = ["Scan", "Process", "Index", "Done"];
-    
+
     rsx! {
         div { class: "space-y-2",
             // Step indicators
@@ -888,7 +891,7 @@ fn render_progress_monitor(job: &ReindexJobRow) -> Element {
                     }
                 }
             }
-            
+
             // Progress bar
             div { class: "relative h-2 bg-gray-700 rounded-full overflow-hidden",
                 div {
@@ -904,7 +907,7 @@ fn render_progress_monitor(job: &ReindexJobRow) -> Element {
                     style: "width: {progress_percent}%",
                 }
             }
-            
+
             // Status text
             div { class: "flex justify-between text-[10px]",
                 span {
@@ -991,10 +994,7 @@ async fn refresh_job_statuses(
 
     for job_id in job_ids {
         if let Err(err) = refresh_single_job(job_id.clone(), jobs.clone(), state.clone()).await {
-            state.write().status_message = Some(format!(
-                "Failed to refresh {}: {}",
-                job_id, err
-            ));
+            state.write().status_message = Some(format!("Failed to refresh {}: {}", job_id, err));
         }
     }
 }
@@ -1015,11 +1015,8 @@ async fn refresh_single_job(
 
             if matches!(status_label.as_str(), "completed" | "failed") {
                 let mut snapshot = state.write();
-                snapshot.status_message = Some(format!(
-                    "Job {} {}",
-                    job_id,
-                    pretty_status(&status_label)
-                ));
+                snapshot.status_message =
+                    Some(format!("Job {} {}", job_id, pretty_status(&status_label)));
             }
 
             Ok(())

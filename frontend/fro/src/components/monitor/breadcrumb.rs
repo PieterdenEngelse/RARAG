@@ -30,7 +30,7 @@ pub fn Breadcrumb(props: BreadcrumbProps) -> Element {
     }
 
     rsx! {
-        nav { class: "text-base font-semibold text-teal-200 flex items-center flex-wrap gap-3 py-4 px-2",
+        nav { class: "text-base font-semibold text-teal-200 flex items-center flex-wrap gap-3 py-4 px-2", style: "margin-bottom: -0.75%;",
             for (idx, item) in props.items.iter().enumerate() {
                 if let Some(route) = &item.route {
                     Link {

@@ -140,6 +140,43 @@ pub struct ChunkCommitRequest {
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct LlmConfig {
+    pub temperature: f32,
+    pub top_p: f32,
+    pub top_k: usize,
+    pub max_tokens: usize,
+    pub repeat_penalty: f32,
+    pub frequency_penalty: f32,
+    pub presence_penalty: f32,
+    pub stop_sequences: Vec<String>,
+    pub seed: Option<i64>,
+}
+
+impl Default for LlmConfig {
+    fn default() -> Self {
+        Self {
+            temperature: 0.7,
+            top_p: 0.95,
+            top_k: 40,
+            max_tokens: 1024,
+            repeat_penalty: 1.1,
+            frequency_penalty: 0.0,
+            presence_penalty: 0.0,
+            stop_sequences: Vec::new(),
+            seed: None,
+        }
+    }
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct LlmConfigResponse {
+    pub status: String,
+    pub message: String,
+    pub request_id: String,
+    pub config: LlmConfig,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct CacheLayerStats {
     pub enabled: bool,
     pub total_searches: u64,
@@ -310,8 +347,31 @@ pub async fn reindex_async() -> Result<ReindexAsyncResponse, String> {
         .map_err(|e| format!("Failed to parse response: {}", e))
 }
 
-pub async fn commit_chunk_config(payload: &ChunkCommitRequest) -> Result<ChunkCommitResponse, String> {
+pub async fn commit_chunk_config(
+    payload: &ChunkCommitRequest,
+) -> Result<ChunkCommitResponse, String> {
     let url = format!("{}/config/chunk_size", API_BASE_URL);
+    gloo_net::http::Request::post(&url)
+        .header("Content-Type", "application/json")
+        .body(
+            serde_json::to_string(payload)
+                .map_err(|e| format!("Failed to serialize payload: {}", e))?,
+        )
+        .map_err(|e| format!("Failed to build request: {}", e))?
+        .send()
+        .await
+        .map_err(|e| format!("Request failed: {}", e))?
+        .json()
+        .await
+        .map_err(|e| format!("Failed to parse response: {}", e))
+}
+
+pub async fn fetch_llm_config() -> Result<LlmConfigResponse, String> {
+    fetch_json::<LlmConfigResponse>("/config/llm").await
+}
+
+pub async fn commit_llm_config(payload: &LlmConfig) -> Result<LlmConfigResponse, String> {
+    let url = format!("{}/config/llm", API_BASE_URL);
     gloo_net::http::Request::post(&url)
         .header("Content-Type", "application/json")
         .body(

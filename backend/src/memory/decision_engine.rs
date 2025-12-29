@@ -336,6 +336,13 @@ mod tests {
         async fn generate(&self, _prompt: &str) -> Result<String, crate::memory::LLMError> {
             Ok("test".to_string())
         }
+        async fn generate_with_config(
+            &self,
+            _prompt: &str,
+            _config: &crate::db::llm_settings::LlmConfig,
+        ) -> Result<String, crate::memory::LLMError> {
+            Ok("test".to_string())
+        }
         fn model_name(&self) -> &str {
             "mock"
         }

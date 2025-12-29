@@ -7,7 +7,8 @@ use urlencoding::encode;
 use wasm_bindgen_futures::JsFuture;
 use web_sys::console;
 
-const REQUEST_METRICS_COMMAND: &str = "curl http://127.0.0.1:3010/monitoring/metrics | grep http_requests_total";
+const REQUEST_METRICS_COMMAND: &str =
+    "curl http://127.0.0.1:3010/monitoring/metrics | grep http_requests_total";
 const JOURNALCTL_COMMAND: &str = "journalctl -u ag.service -n 200 -f";
 const TAIL_LOGS_COMMAND: &str = "tail -f logs/ag.log";
 
