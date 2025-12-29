@@ -35,10 +35,10 @@ pub enum SourceType {
 }
 
 // Default values optimized for small local models like phi (2K context)
-pub const DEFAULT_TARGET_SIZE: usize = 384;      // Target tokens per chunk
-pub const DEFAULT_MIN_SIZE: usize = 192;         // Minimum tokens
-pub const DEFAULT_MAX_SIZE: usize = 512;         // Maximum tokens  
-pub const DEFAULT_OVERLAP: usize = 50;           // Overlap tokens
+pub const DEFAULT_TARGET_SIZE: usize = 384; // Target tokens per chunk
+pub const DEFAULT_MIN_SIZE: usize = 192; // Minimum tokens
+pub const DEFAULT_MAX_SIZE: usize = 512; // Maximum tokens
+pub const DEFAULT_OVERLAP: usize = 50; // Overlap tokens
 pub const DEFAULT_SEMANTIC_SIMILARITY_THRESHOLD: f32 = 0.78;
 
 #[derive(Debug, Clone)]
@@ -64,7 +64,7 @@ impl Default for ChunkerConfig {
 
 impl ChunkerConfig {
     /// Load configuration from environment variables with sensible defaults
-    /// 
+    ///
     /// Environment variables:
     /// - CHUNK_TARGET_SIZE: Target tokens per chunk (default: 384)
     /// - CHUNK_MIN_SIZE: Minimum tokens per chunk (default: 192)
@@ -76,28 +76,28 @@ impl ChunkerConfig {
             .ok()
             .and_then(|v| v.parse().ok())
             .unwrap_or(DEFAULT_TARGET_SIZE);
-        
+
         let min_size = env::var("CHUNK_MIN_SIZE")
             .ok()
             .and_then(|v| v.parse().ok())
             .unwrap_or(DEFAULT_MIN_SIZE);
-        
+
         let max_size = env::var("CHUNK_MAX_SIZE")
             .ok()
             .and_then(|v| v.parse().ok())
             .unwrap_or(DEFAULT_MAX_SIZE);
-        
+
         let overlap = env::var("CHUNK_OVERLAP")
             .ok()
             .and_then(|v| v.parse().ok())
             .unwrap_or(DEFAULT_OVERLAP);
-        
+
         let semantic_similarity_threshold = env::var("SEMANTIC_SIMILARITY_THRESHOLD")
             .ok()
             .and_then(|v| v.parse().ok())
             .map(|v: f32| v.clamp(0.0, 1.0))
             .unwrap_or(DEFAULT_SEMANTIC_SIMILARITY_THRESHOLD);
-        
+
         Self {
             target_size,
             min_size,
@@ -106,7 +106,7 @@ impl ChunkerConfig {
             semantic_similarity_threshold,
         }
     }
-    
+
     /// Create config optimized for different model sizes
     pub fn for_model(model_context_size: usize) -> Self {
         match model_context_size {

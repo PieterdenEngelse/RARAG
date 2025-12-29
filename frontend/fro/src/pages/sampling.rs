@@ -9,6 +9,19 @@ use dioxus::prelude::*;
 const TEMP_MIN: f32 = 0.0;
 const TEMP_MAX: f32 = 2.0;
 
+const PARAM_BLOCK_CLASS: &str = "flex flex-col gap-0 text-xs text-gray-200";
+const STOP_BLOCK_CLASS: &str = "flex flex-col gap-0 text-xs text-gray-200";
+const PARAM_COLUMN_CLASS: &str = "space-y-5 md:w-[18rem]";
+const PARAM_COLUMN_SHIFT_CLASS: &str = "md:-ml-[4.4rem]";
+const PARAM_INPUT_ROW_CLASS: &str = "flex items-end gap-2 -mt-1";
+const PARAM_LABEL_CLASS: &str = "text-gray-400 whitespace-nowrap";
+const PARAM_ICON_BUTTON_CLASS: &str =
+    "w-8 h-8 rounded border border-blue-500/40 bg-blue-500/10 flex items-center justify-center cursor-pointer hover:bg-blue-500/20";
+const PARAM_NUMBER_INPUT_CLASS: &str =
+    "input input-xs input-bordered bg-gray-700 text-gray-200 w-44";
+const PARAM_TEXT_INPUT_CLASS: &str =
+    "input input-xs input-bordered bg-gray-700 text-gray-200 w-72";
+
 #[component]
 fn InfoIcon() -> Element {
     rsx! {
@@ -160,229 +173,227 @@ pub fn ConfigSampling() -> Element {
                 } else if let Some(status) = llm_status() {
                     div { class: "text-xs text-gray-400", "{status}" }
                 }
-                div { class: "grid grid-cols-2 md:grid-cols-3 gap-3 text-xs text-gray-200",
-                    div { class: "grid gap-y-1 gap-x-2 col-span-1 [grid-template-columns:max-content_2.5rem]",
-                        label { class: "text-gray-400 whitespace-nowrap", "temperature" }
-                        input {
-                            r#type: "number",
-                            class: "input input-xs input-bordered bg-gray-700 text-gray-200 w-24 pr-0 col-start-1 row-start-2",
-                            value: llm_config().temperature.to_string(),
-                            step: "0.1",
-                            min: "0",
-                            max: "2",
-                            disabled: llm_loading(),
-                            oninput: move |evt| {
-                                if let Some(val) = parse_f32(&evt.value()) {
-                                    llm_config.with_mut(|cfg| cfg.temperature = clamp_temperature(val));
+                div {
+                    class: "flex flex-col gap-6 md:flex-row md:flex-wrap md:gap-x-8 md:gap-y-6",
+                    div { class: PARAM_COLUMN_CLASS,
+                        div { class: PARAM_BLOCK_CLASS,
+                            label { class: PARAM_LABEL_CLASS, "temperature" }
+                            div { class: PARAM_INPUT_ROW_CLASS,
+                                input {
+                                    r#type: "number",
+                                    class: PARAM_NUMBER_INPUT_CLASS,
+                                    value: llm_config().temperature.to_string(),
+                                    step: "0.1",
+                                    min: "0",
+                                    max: "2",
+                                    disabled: llm_loading(),
+                                    oninput: move |evt| {
+                                        if let Some(val) = parse_f32(&evt.value()) {
+                                            llm_config.with_mut(|cfg| cfg.temperature = clamp_temperature(val));
+                                        }
+                                    }
+                                }
+                                div {
+                                    class: PARAM_ICON_BUTTON_CLASS,
+                                    onclick: move |_| show_temp_info.set(true),
+                                    InfoIcon {}
                                 }
                             }
                         }
-                        div {
-                            class: "col-start-2 row-span-2 flex items-center justify-center translate-y-[1mm]",
-                            onclick: move |_| show_temp_info.set(true),
-                            div {
-                                class: "w-10 h-10 rounded border border-blue-500/40 bg-blue-500/10 flex items-center justify-center cursor-pointer hover:bg-blue-500/20",
-                                InfoIcon {}
-                            }
-                        }
-                    }
-                    div { class: "grid gap-y-1 gap-x-2 [grid-template-columns:16ch_2.5rem]",
-                        label { class: "text-gray-400 whitespace-nowrap", "repeat_penalty" }
-                        input {
-                            r#type: "number",
-                            class: "input input-xs input-bordered bg-gray-700 text-gray-200 w-24 pr-0 col-start-1 row-start-2",
-                            value: llm_config().repeat_penalty.to_string(),
-                            step: "0.1",
-                            min: "0",
-                            disabled: llm_loading(),
-                            oninput: move |evt| {
-                                if let Some(val) = parse_f32(&evt.value()) {
-                                    llm_config.with_mut(|cfg| cfg.repeat_penalty = val);
+                        div { class: PARAM_BLOCK_CLASS,
+                            label { class: PARAM_LABEL_CLASS, "repeat_penalty" }
+                            div { class: PARAM_INPUT_ROW_CLASS,
+                                input {
+                                    r#type: "number",
+                                    class: PARAM_NUMBER_INPUT_CLASS,
+                                    value: llm_config().repeat_penalty.to_string(),
+                                    step: "0.1",
+                                    min: "0",
+                                    disabled: llm_loading(),
+                                    oninput: move |evt| {
+                                        if let Some(val) = parse_f32(&evt.value()) {
+                                            llm_config.with_mut(|cfg| cfg.repeat_penalty = val);
+                                        }
+                                    }
+                                }
+                                div {
+                                    class: PARAM_ICON_BUTTON_CLASS,
+                                    onclick: move |_| show_repeat_penalty_info.set(true),
+                                    InfoIcon {}
                                 }
                             }
                         }
-                        div {
-                            class: "col-start-2 row-span-2 flex items-center justify-center translate-y-[1mm]",
-                            onclick: move |_| show_repeat_penalty_info.set(true),
-                            div {
-                                class: "w-10 h-10 rounded border border-blue-500/40 bg-blue-500/10 flex items-center justify-center cursor-pointer hover:bg-blue-500/20",
-                                InfoIcon {}
-                            }
-                        }
-                    }
-                    div { class: "grid gap-y-1 gap-x-2 [grid-template-columns:max-content_2.5rem]",
-                        label { class: "text-gray-400 whitespace-nowrap", "max_tokens" }
-                        input {
-                            r#type: "number",
-                            class: "input input-xs input-bordered bg-gray-700 text-gray-200 w-24 pr-0 col-start-1 row-start-2",
-                            value: llm_config().max_tokens.to_string(),
-                            step: "128",
-                            min: "1",
-                            disabled: llm_loading(),
-                            oninput: move |evt| {
-                                if let Some(val) = parse_usize(&evt.value()) {
-                                    llm_config.with_mut(|cfg| cfg.max_tokens = val);
+                        div { class: PARAM_BLOCK_CLASS,
+                            label { class: PARAM_LABEL_CLASS, "max_tokens" }
+                            div { class: PARAM_INPUT_ROW_CLASS,
+                                input {
+                                    r#type: "number",
+                                    class: PARAM_NUMBER_INPUT_CLASS,
+                                    value: llm_config().max_tokens.to_string(),
+                                    step: "128",
+                                    min: "1",
+                                    disabled: llm_loading(),
+                                    oninput: move |evt| {
+                                        if let Some(val) = parse_usize(&evt.value()) {
+                                            llm_config.with_mut(|cfg| cfg.max_tokens = val);
+                                        }
+                                    }
+                                }
+                                div {
+                                    class: PARAM_ICON_BUTTON_CLASS,
+                                    onclick: move |_| show_max_tokens_info.set(true),
+                                    InfoIcon {}
                                 }
                             }
                         }
-                        div {
-                            class: "col-start-2 row-span-2 flex items-center justify-center translate-y-[1mm]",
-                            onclick: move |_| show_max_tokens_info.set(true),
-                            div {
-                                class: "w-10 h-10 rounded border border-blue-500/40 bg-blue-500/10 flex items-center justify-center cursor-pointer hover:bg-blue-500/20",
-                                InfoIcon {}
-                            }
-                        }
                     }
-                    div { class: "grid gap-y-1 gap-x-2 [grid-template-columns:max-content_2.5rem]",
-                        label { class: "text-gray-400 whitespace-nowrap", "top_k" }
-                        input {
-                            r#type: "number",
-                            class: "input input-xs input-bordered bg-gray-700 text-gray-200 w-24 pr-0 col-start-1 row-start-2",
-                            value: llm_config().top_k.to_string(),
-                            step: "1",
-                            min: "1",
-                            disabled: llm_loading(),
-                            oninput: move |evt| {
-                                if let Some(val) = parse_usize(&evt.value()) {
-                                    llm_config.with_mut(|cfg| cfg.top_k = val);
+                    div { class: format!("{} {}", PARAM_COLUMN_CLASS, PARAM_COLUMN_SHIFT_CLASS),
+                        div { class: PARAM_BLOCK_CLASS,
+                            label { class: PARAM_LABEL_CLASS, "top_k" }
+                            div { class: PARAM_INPUT_ROW_CLASS,
+                                input {
+                                    r#type: "number",
+                                    class: PARAM_NUMBER_INPUT_CLASS,
+                                    value: llm_config().top_k.to_string(),
+                                    step: "1",
+                                    min: "1",
+                                    disabled: llm_loading(),
+                                    oninput: move |evt| {
+                                        if let Some(val) = parse_usize(&evt.value()) {
+                                            llm_config.with_mut(|cfg| cfg.top_k = val);
+                                        }
+                                    }
+                                }
+                                div {
+                                    class: PARAM_ICON_BUTTON_CLASS,
+                                    onclick: move |_| show_topk_info.set(true),
+                                    InfoIcon {}
                                 }
                             }
                         }
-                        div {
-                            class: "col-start-2 row-span-2 flex items-center justify-center translate-y-[1mm]",
-                            onclick: move |_| show_topk_info.set(true),
-                            div {
-                                class: "w-10 h-10 rounded border border-blue-500/40 bg-blue-500/10 flex items-center justify-center cursor-pointer hover:bg-blue-500/20",
-                                InfoIcon {}
-                            }
-                        }
-                    }
-                    div { class: "grid gap-y-1 gap-x-2 [grid-template-columns:16ch_2.5rem]",
-                        label { class: "text-gray-400 whitespace-nowrap", "frequency_penalty" }
-                        input {
-                            r#type: "number",
-                            class: "input input-xs input-bordered bg-gray-700 text-gray-200 w-24 pr-0 col-start-1 row-start-2",
-                            value: llm_config().frequency_penalty.to_string(),
-                            step: "0.1",
-                            min: "0",
-                            max: "2",
-                            disabled: llm_loading(),
-                            oninput: move |evt| {
-                                if let Some(val) = parse_f32(&evt.value()) {
-                                    llm_config.with_mut(|cfg| cfg.frequency_penalty = val.clamp(0.0, 2.0));
+                        div { class: PARAM_BLOCK_CLASS,
+                            label { class: PARAM_LABEL_CLASS, "frequency_penalty" }
+                            div { class: PARAM_INPUT_ROW_CLASS,
+                                input {
+                                    r#type: "number",
+                                    class: PARAM_NUMBER_INPUT_CLASS,
+                                    value: llm_config().frequency_penalty.to_string(),
+                                    step: "0.1",
+                                    min: "0",
+                                    max: "2",
+                                    disabled: llm_loading(),
+                                    oninput: move |evt| {
+                                        if let Some(val) = parse_f32(&evt.value()) {
+                                            llm_config.with_mut(|cfg| cfg.frequency_penalty = val.clamp(0.0, 2.0));
+                                        }
+                                    }
+                                }
+                                div {
+                                    class: PARAM_ICON_BUTTON_CLASS,
+                                    onclick: move |_| show_frequency_penalty_info.set(true),
+                                    InfoIcon {}
                                 }
                             }
                         }
-                        div {
-                            class: "col-start-2 row-span-2 flex items-center justify-center translate-y-[1mm]",
-                            onclick: move |_| show_frequency_penalty_info.set(true),
-                            div {
-                                class: "w-10 h-10 rounded border border-blue-500/40 bg-blue-500/10 flex items-center justify-center cursor-pointer hover:bg-blue-500/20",
-                                InfoIcon {}
-                            }
-                        }
-                    }
-                    div { class: "grid gap-y-1 gap-x-2 [grid-template-columns:max-content_2.5rem]",
-                        label { class: "text-gray-400 whitespace-nowrap", "seed" }
-                        input {
-                            r#type: "number",
-                            class: "input input-xs input-bordered bg-gray-700 text-gray-200 w-24 pr-0 col-start-1 row-start-2",
-                            value: llm_config().seed.map(|seed| seed.to_string()).unwrap_or_default(),
-                            placeholder: "None",
-                            disabled: llm_loading(),
-                            oninput: move |evt| {
-                                let value = evt.value();
-                                if value.trim().is_empty() {
-                                    llm_config.with_mut(|cfg| cfg.seed = None);
-                                } else if let Some(val) = parse_i64(&value) {
-                                    llm_config.with_mut(|cfg| cfg.seed = Some(val));
+                        div { class: PARAM_BLOCK_CLASS,
+                            label { class: PARAM_LABEL_CLASS, "seed" }
+                            div { class: PARAM_INPUT_ROW_CLASS,
+                                input {
+                                    r#type: "number",
+                                    class: PARAM_NUMBER_INPUT_CLASS,
+                                    value: llm_config().seed.map(|seed| seed.to_string()).unwrap_or_default(),
+                                    placeholder: "None",
+                                    disabled: llm_loading(),
+                                    oninput: move |evt| {
+                                        let value = evt.value();
+                                        if value.trim().is_empty() {
+                                            llm_config.with_mut(|cfg| cfg.seed = None);
+                                        } else if let Some(val) = parse_i64(&value) {
+                                            llm_config.with_mut(|cfg| cfg.seed = Some(val));
+                                        }
+                                    }
+                                }
+                                div {
+                                    class: PARAM_ICON_BUTTON_CLASS,
+                                    onclick: move |_| show_seed_info.set(true),
+                                    InfoIcon {}
                                 }
                             }
                         }
-                        div {
-                            class: "col-start-2 row-span-2 flex items-center justify-center translate-y-[1mm]",
-                            onclick: move |_| show_seed_info.set(true),
-                            div {
-                                class: "w-10 h-10 rounded border border-blue-500/40 bg-blue-500/10 flex items-center justify-center cursor-pointer hover:bg-blue-500/20",
-                                InfoIcon {}
-                            }
-                        }
                     }
-                    div { class: "grid gap-y-1 gap-x-2 [grid-template-columns:max-content_2.5rem]",
-                        label { class: "text-gray-400 whitespace-nowrap", "top_p" }
-                        input {
-                            r#type: "number",
-                            class: "input input-xs input-bordered bg-gray-700 text-gray-200 w-24 pr-0 col-start-1 row-start-2",
-                            value: llm_config().top_p.to_string(),
-                            step: "0.05",
-                            min: "0",
-                            max: "1",
-                            disabled: llm_loading(),
-                            oninput: move |evt| {
-                                if let Some(val) = parse_f32(&evt.value()) {
-                                    llm_config.with_mut(|cfg| cfg.top_p = val);
+                    div { class: format!("{} {}", PARAM_COLUMN_CLASS, PARAM_COLUMN_SHIFT_CLASS),
+                        div { class: PARAM_BLOCK_CLASS,
+                            label { class: PARAM_LABEL_CLASS, "top_p" }
+                            div { class: PARAM_INPUT_ROW_CLASS,
+                                input {
+                                    r#type: "number",
+                                    class: PARAM_NUMBER_INPUT_CLASS,
+                                    value: llm_config().top_p.to_string(),
+                                    step: "0.05",
+                                    min: "0",
+                                    max: "1",
+                                    disabled: llm_loading(),
+                                    oninput: move |evt| {
+                                        if let Some(val) = parse_f32(&evt.value()) {
+                                            llm_config.with_mut(|cfg| cfg.top_p = val);
+                                        }
+                                    }
+                                }
+                                div {
+                                    class: PARAM_ICON_BUTTON_CLASS,
+                                    onclick: move |_| show_topp_info.set(true),
+                                    InfoIcon {}
                                 }
                             }
                         }
-                        div {
-                            class: "col-start-2 row-span-2 flex items-center justify-center translate-y-[1mm]",
-                            onclick: move |_| show_topp_info.set(true),
-                            div {
-                                class: "w-10 h-10 rounded border border-blue-500/40 bg-blue-500/10 flex items-center justify-center cursor-pointer hover:bg-blue-500/20",
-                                InfoIcon {}
-                            }
-                        }
-                    }
-                    div { class: "grid gap-y-1 gap-x-2 [grid-template-columns:16ch_2.5rem]",
-                        label { class: "text-gray-400 whitespace-nowrap", "presence_penalty" }
-                        input {
-                            r#type: "number",
-                            class: "input input-xs input-bordered bg-gray-700 text-gray-200 w-24 pr-0 col-start-1 row-start-2",
-                            value: llm_config().presence_penalty.to_string(),
-                            step: "0.1",
-                            min: "0",
-                            max: "2",
-                            disabled: llm_loading(),
-                            oninput: move |evt| {
-                                if let Some(val) = parse_f32(&evt.value()) {
-                                    llm_config.with_mut(|cfg| cfg.presence_penalty = val.clamp(0.0, 2.0));
+                        div { class: PARAM_BLOCK_CLASS,
+                            label { class: PARAM_LABEL_CLASS, "presence_penalty" }
+                            div { class: PARAM_INPUT_ROW_CLASS,
+                                input {
+                                    r#type: "number",
+                                    class: PARAM_NUMBER_INPUT_CLASS,
+                                    value: llm_config().presence_penalty.to_string(),
+                                    step: "0.1",
+                                    min: "0",
+                                    max: "2",
+                                    disabled: llm_loading(),
+                                    oninput: move |evt| {
+                                        if let Some(val) = parse_f32(&evt.value()) {
+                                            llm_config.with_mut(|cfg| cfg.presence_penalty = val.clamp(0.0, 2.0));
+                                        }
+                                    }
+                                }
+                                div {
+                                    class: PARAM_ICON_BUTTON_CLASS,
+                                    onclick: move |_| show_presence_penalty_info.set(true),
+                                    InfoIcon {}
                                 }
                             }
                         }
-                        div {
-                            class: "col-start-2 row-span-2 flex items-center justify-center translate-y-[1mm]",
-                            onclick: move |_| show_presence_penalty_info.set(true),
-                            div {
-                                class: "w-10 h-10 rounded border border-blue-500/40 bg-blue-500/10 flex items-center justify-center cursor-pointer hover:bg-blue-500/20",
-                                InfoIcon {}
-                            }
-                        }
-                    }
-                    div { class: "grid col-span-2 gap-y-1 gap-x-2 [grid-template-columns:max-content_2.5rem]",
-                        label { class: "text-gray-400 whitespace-nowrap", "stop_sequences (comma-separated)" }
-                        input {
-                            r#type: "text",
-                            class: "input input-xs input-bordered min-w-0 w-full bg-gray-700 text-gray-200 col-start-1 row-start-2",
-                            value: llm_config().stop_sequences.join(", "),
-                            placeholder: "e.g. END, ###, \n\n",
-                            disabled: llm_loading(),
-                            oninput: move |evt| {
-                                let value = evt.value();
-                                let sequences: Vec<String> = value
-                                    .split(',')
-                                    .map(|s| s.trim().to_string())
-                                    .filter(|s| !s.is_empty())
-                                    .collect();
-                                llm_config.with_mut(|cfg| cfg.stop_sequences = sequences);
-                            }
-                        }
-                        div {
-                            class: "col-start-2 row-span-2 flex items-center justify-center translate-y-[1mm]",
-                            div {
-                                class: "w-10 h-10 rounded border border-blue-500/40 bg-blue-500/10 flex items-center justify-center cursor-pointer hover:bg-blue-500/20",
-                                onclick: move |_| show_stop_sequences_info.set(true),
-                                InfoIcon {}
+                        div { class: STOP_BLOCK_CLASS,
+                            label { class: PARAM_LABEL_CLASS, "stop_sequences" }
+                            div { class: PARAM_INPUT_ROW_CLASS,
+                                input {
+                                    r#type: "text",
+                                    class: PARAM_TEXT_INPUT_CLASS,
+                                    value: llm_config().stop_sequences.join(", "),
+                                    placeholder: "e.g. END, ###, \n\n",
+                                    disabled: llm_loading(),
+                                    oninput: move |evt| {
+                                        let value = evt.value();
+                                        let sequences: Vec<String> = value
+                                            .split(',')
+                                            .map(|s| s.trim().to_string())
+                                            .filter(|s| !s.is_empty())
+                                            .collect();
+                                        llm_config.with_mut(|cfg| cfg.stop_sequences = sequences);
+                                    }
+                                }
+                                div {
+                                    class: PARAM_ICON_BUTTON_CLASS,
+                                    onclick: move |_| show_stop_sequences_info.set(true),
+                                    InfoIcon {}
+                                }
                             }
                         }
                     }
