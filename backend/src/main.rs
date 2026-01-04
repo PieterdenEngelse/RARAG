@@ -97,6 +97,8 @@ async fn main() -> std::io::Result<()> {
 
         SchemaInitializer::init(&conn)
             .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e.to_string()))?;
+        ag::db::param_store::init_table(&conn)
+            .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e.to_string()))?;
 
         Ok(conn)
     })() {
@@ -114,6 +116,7 @@ async fn main() -> std::io::Result<()> {
     ag::db::chunk_settings::set_global_db_path(pm.db_path("documents"));
     ag::db::chunk_settings::load_active_config(&_db_conn);
     ag::db::llm_settings::load_active_config(&_db_conn);
+    ag::db::param_hardware::load_active_config(&_db_conn);
 
     // ─────────────────────────────────────────────────────────────
     // PHASE 4: Initialize Retriever with PathManager

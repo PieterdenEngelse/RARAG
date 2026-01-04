@@ -9,31 +9,31 @@ use dioxus::prelude::*;
 const TEMP_MIN: f32 = 0.0;
 const TEMP_MAX: f32 = 2.0;
 
-const PARAM_BLOCK_CLASS: &str = "flex flex-col gap-0 text-xs text-gray-200";
-const STOP_BLOCK_CLASS: &str = "flex flex-col gap-0 text-xs text-gray-200";
+const PARAM_BLOCK_CLASS: &str = "flex flex-col gap-1 text-xs text-gray-200";
+const STOP_BLOCK_CLASS: &str = "flex flex-col gap-1 text-xs text-gray-200";
 const PARAM_COLUMN_CLASS: &str = "space-y-5 md:w-[18rem]";
-const PARAM_COLUMN_SHIFT_CLASS: &str = "md:-ml-[4.4rem]";
-const PARAM_INPUT_ROW_CLASS: &str = "flex items-end gap-2 -mt-1";
+const PARAM_COLUMN_SHIFT_CLASS: &str = "md-shift-left";
+const PARAM_INPUT_ROW_CLASS: &str = "flex items-end gap-2";
 const PARAM_LABEL_CLASS: &str = "text-gray-400 whitespace-nowrap";
 const PARAM_ICON_BUTTON_CLASS: &str =
-    "w-8 h-8 rounded border border-blue-500/40 bg-blue-500/10 flex items-center justify-center cursor-pointer hover:bg-blue-500/20";
+    "w-5 h-5 rounded border border-blue-500/40 bg-blue-500/10 flex items-center justify-center cursor-pointer hover:bg-blue-500/20";
 const PARAM_NUMBER_INPUT_CLASS: &str =
-    "input input-xs input-bordered bg-gray-700 text-gray-200 w-44";
-const PARAM_TEXT_INPUT_CLASS: &str =
-    "input input-xs input-bordered bg-gray-700 text-gray-200 w-72";
+    "input input-xs input-bordered bg-gray-700 text-gray-200 !w-24";
+// Wider input for comma-separated text values (e.g., stop_sequences: "\n, </s>, [END]")
+const PARAM_TEXT_INPUT_CLASS: &str = "input input-xs input-bordered bg-gray-700 text-gray-200 w-72";
 
 #[component]
 fn InfoIcon() -> Element {
     rsx! {
         svg {
-            class: "w-6 h-6 text-blue-400",
+            class: "w-3 h-3 text-blue-400",
             view_box: "0 0 20 20",
             fill: "none",
             stroke: "currentColor",
-            stroke_width: "1.8",
+            stroke_width: "2",
             circle { cx: "10", cy: "10", r: "9" }
             line { x1: "10", y1: "8", x2: "10", y2: "14" }
-            circle { cx: "10", cy: "6.3", r: "0.9", fill: "currentColor", stroke: "none" }
+            circle { cx: "10", cy: "6.3", r: "1", fill: "currentColor", stroke: "none" }
         }
     }
 }
@@ -56,6 +56,15 @@ fn clamp_temperature(val: f32) -> f32 {
 
 fn sanitize_llm_config(mut cfg: api::LlmConfig) -> api::LlmConfig {
     cfg.temperature = clamp_temperature(cfg.temperature);
+    cfg.min_p = cfg.min_p.clamp(0.0, 1.0);
+    cfg.typical_p = cfg.typical_p.clamp(0.0, 1.0);
+    cfg.tfs_z = cfg.tfs_z.clamp(0.0, 1.0);
+    cfg.mirostat = cfg.mirostat.clamp(0, 2);
+    cfg.mirostat_eta = cfg.mirostat_eta.clamp(0.0, 1.0);
+    cfg.mirostat_tau = cfg.mirostat_tau.clamp(0.0, 10.0);
+    if cfg.repeat_last_n == 0 {
+        cfg.repeat_last_n = 64;
+    }
     cfg
 }
 
@@ -89,9 +98,9 @@ fn info_modal(title: &str, toggle: Signal<bool>, paragraphs: Vec<&str>) -> Eleme
 #[component]
 pub fn ConfigSampling() -> Element {
     let mut llm_config = use_signal(api::LlmConfig::default);
-    let mut llm_loading = use_signal(|| true);
+    let llm_loading = use_signal(|| true);
     let mut llm_error = use_signal(|| Option::<String>::None);
-    let mut llm_status = use_signal(|| Option::<String>::None);
+    let llm_status = use_signal(|| Option::<String>::None);
     let mut llm_saving = use_signal(|| false);
     let mut show_temp_info = use_signal(|| false);
     let mut show_repeat_penalty_info = use_signal(|| false);
@@ -102,6 +111,15 @@ pub fn ConfigSampling() -> Element {
     let mut show_frequency_penalty_info = use_signal(|| false);
     let mut show_presence_penalty_info = use_signal(|| false);
     let mut show_stop_sequences_info = use_signal(|| false);
+    let mut show_min_p_info = use_signal(|| false);
+    let mut show_typical_p_info = use_signal(|| false);
+    let mut show_tfs_z_info = use_signal(|| false);
+    let mut show_mirostat_info = use_signal(|| false);
+    let mut show_mirostat_eta_info = use_signal(|| false);
+    let mut show_mirostat_tau_info = use_signal(|| false);
+    let mut show_repeat_last_n_info = use_signal(|| false);
+    let backend_type = use_signal(|| Option::<api::BackendType>::None);
+    let backend_error = use_signal(|| Option::<String>::None);
 
     {
         let mut llm_config = llm_config.clone();
@@ -121,6 +139,22 @@ pub fn ConfigSampling() -> Element {
                 }
             }
             llm_loading.set(false);
+        });
+    }
+
+    {
+        let mut backend_type = backend_type.clone();
+        let mut backend_error = backend_error.clone();
+        use_future(move || async move {
+            match api::fetch_hardware_config().await {
+                Ok(resp) => {
+                    backend_type.set(Some(resp.config.get_backend_type()));
+                    backend_error.set(None);
+                }
+                Err(err) => {
+                    backend_error.set(Some(format!("Failed to load backend info: {}", err)));
+                }
+            }
         });
     }
 
@@ -145,6 +179,12 @@ pub fn ConfigSampling() -> Element {
             llm_saving.set(false);
         });
     };
+
+    let backend_type_value = backend_type();
+    let backend_error_value = backend_error();
+    let supports_extended_sampling = backend_type_value
+        .map(|bt| matches!(bt, api::BackendType::Ollama))
+        .unwrap_or(true);
 
     rsx! {
         div { class: "space-y-6",
@@ -173,8 +213,16 @@ pub fn ConfigSampling() -> Element {
                 } else if let Some(status) = llm_status() {
                     div { class: "text-xs text-gray-400", "{status}" }
                 }
+                if let Some(bt) = backend_type_value {
+                    div { class: "text-xs text-gray-400", "Active backend: {bt.label()}" }
+                    if !supports_extended_sampling {
+                        div { class: "text-[0.65rem] text-amber-300", "Advanced sampling controls hidden because {bt.label()} does not support these Ollama-specific parameters." }
+                    }
+                } else if let Some(err) = backend_error_value {
+                    div { class: "text-xs text-red-400", "{err}" }
+                }
                 div {
-                    class: "flex flex-col gap-6 md:flex-row md:flex-wrap md:gap-x-8 md:gap-y-6",
+                    class: "flex flex-col gap-6 md:flex-row md:flex-wrap md:gap-x-[1cm] md:gap-y-6",
                     div { class: PARAM_COLUMN_CLASS,
                         div { class: PARAM_BLOCK_CLASS,
                             label { class: PARAM_LABEL_CLASS, "temperature" }
@@ -247,7 +295,7 @@ pub fn ConfigSampling() -> Element {
                             }
                         }
                     }
-                    div { class: format!("{} {}", PARAM_COLUMN_CLASS, PARAM_COLUMN_SHIFT_CLASS),
+                    div { class: PARAM_COLUMN_CLASS, style: "margin-left:-10mm;",
                         div { class: PARAM_BLOCK_CLASS,
                             label { class: PARAM_LABEL_CLASS, "top_k" }
                             div { class: PARAM_INPUT_ROW_CLASS,
@@ -321,7 +369,7 @@ pub fn ConfigSampling() -> Element {
                             }
                         }
                     }
-                    div { class: format!("{} {}", PARAM_COLUMN_CLASS, PARAM_COLUMN_SHIFT_CLASS),
+                    div { class: PARAM_COLUMN_CLASS, style: "margin-left:-10mm;",
                         div { class: PARAM_BLOCK_CLASS,
                             label { class: PARAM_LABEL_CLASS, "top_p" }
                             div { class: PARAM_INPUT_ROW_CLASS,
@@ -370,29 +418,203 @@ pub fn ConfigSampling() -> Element {
                                 }
                             }
                         }
-                        div { class: STOP_BLOCK_CLASS,
-                            label { class: PARAM_LABEL_CLASS, "stop_sequences" }
-                            div { class: PARAM_INPUT_ROW_CLASS,
-                                input {
-                                    r#type: "text",
-                                    class: PARAM_TEXT_INPUT_CLASS,
-                                    value: llm_config().stop_sequences.join(", "),
-                                    placeholder: "e.g. END, ###, \n\n",
-                                    disabled: llm_loading(),
-                                    oninput: move |evt| {
-                                        let value = evt.value();
-                                        let sequences: Vec<String> = value
-                                            .split(',')
-                                            .map(|s| s.trim().to_string())
-                                            .filter(|s| !s.is_empty())
-                                            .collect();
-                                        llm_config.with_mut(|cfg| cfg.stop_sequences = sequences);
+                    }
+                    if supports_extended_sampling {
+                        div { class: PARAM_COLUMN_CLASS, style: "margin-left:-10mm;",
+                            div { class: PARAM_BLOCK_CLASS,
+                                label { class: PARAM_LABEL_CLASS, "min_p" }
+                                div { class: PARAM_INPUT_ROW_CLASS,
+                                    input {
+                                        r#type: "number",
+                                        class: PARAM_NUMBER_INPUT_CLASS,
+                                        value: llm_config().min_p.to_string(),
+                                        step: "0.01",
+                                        min: "0",
+                                        max: "1",
+                                        disabled: llm_loading(),
+                                        oninput: move |evt| {
+                                            if let Some(val) = parse_f32(&evt.value()) {
+                                                llm_config.with_mut(|cfg| cfg.min_p = val);
+                                            }
+                                        }
+                                    }
+                                    div {
+                                        class: PARAM_ICON_BUTTON_CLASS,
+                                        onclick: move |_| show_min_p_info.set(true),
+                                        InfoIcon {}
                                     }
                                 }
-                                div {
-                                    class: PARAM_ICON_BUTTON_CLASS,
-                                    onclick: move |_| show_stop_sequences_info.set(true),
-                                    InfoIcon {}
+                            }
+                            div { class: PARAM_BLOCK_CLASS,
+                                label { class: PARAM_LABEL_CLASS, "typical_p" }
+                                div { class: PARAM_INPUT_ROW_CLASS,
+                                    input {
+                                        r#type: "number",
+                                        class: PARAM_NUMBER_INPUT_CLASS,
+                                        value: llm_config().typical_p.to_string(),
+                                        step: "0.01",
+                                        min: "0",
+                                        max: "1",
+                                        disabled: llm_loading(),
+                                        oninput: move |evt| {
+                                            if let Some(val) = parse_f32(&evt.value()) {
+                                                llm_config.with_mut(|cfg| cfg.typical_p = val);
+                                            }
+                                        }
+                                    }
+                                    div {
+                                        class: PARAM_ICON_BUTTON_CLASS,
+                                        onclick: move |_| show_typical_p_info.set(true),
+                                        InfoIcon {}
+                                    }
+                                }
+                            }
+                            div { class: PARAM_BLOCK_CLASS,
+                                label { class: PARAM_LABEL_CLASS, "tfs_z" }
+                                div { class: PARAM_INPUT_ROW_CLASS,
+                                    input {
+                                        r#type: "number",
+                                        class: PARAM_NUMBER_INPUT_CLASS,
+                                        value: llm_config().tfs_z.to_string(),
+                                        step: "0.01",
+                                        min: "0",
+                                        max: "1",
+                                        disabled: llm_loading(),
+                                        oninput: move |evt| {
+                                            if let Some(val) = parse_f32(&evt.value()) {
+                                                llm_config.with_mut(|cfg| cfg.tfs_z = val);
+                                            }
+                                        }
+                                    }
+                                    div {
+                                        class: PARAM_ICON_BUTTON_CLASS,
+                                        onclick: move |_| show_tfs_z_info.set(true),
+                                        InfoIcon {}
+                                    }
+                                }
+                            }
+                            div { class: PARAM_BLOCK_CLASS,
+                                label { class: PARAM_LABEL_CLASS, "repeat_last_n" }
+                                div { class: PARAM_INPUT_ROW_CLASS,
+                                    input {
+                                        r#type: "number",
+                                        class: PARAM_NUMBER_INPUT_CLASS,
+                                        value: llm_config().repeat_last_n.to_string(),
+                                        step: "1",
+                                        min: "1",
+                                        disabled: llm_loading(),
+                                        oninput: move |evt| {
+                                            if let Some(val) = parse_usize(&evt.value()) {
+                                                llm_config.with_mut(|cfg| cfg.repeat_last_n = val.max(1));
+                                            }
+                                        }
+                                    }
+                                    div {
+                                        class: PARAM_ICON_BUTTON_CLASS,
+                                        onclick: move |_| show_repeat_last_n_info.set(true),
+                                        InfoIcon {}
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    if supports_extended_sampling {
+                        div { class: PARAM_COLUMN_CLASS, style: "margin-left:-10mm;",
+                            div { class: STOP_BLOCK_CLASS,
+                                label { class: PARAM_LABEL_CLASS, "stop_sequences" }
+                                div { class: PARAM_INPUT_ROW_CLASS,
+                                    input {
+                                        r#type: "text",
+                                        class: PARAM_TEXT_INPUT_CLASS,
+                                        value: llm_config().stop_sequences.join(", "),
+                                        placeholder: "e.g. END, ###, \n\n",
+                                        disabled: llm_loading(),
+                                        oninput: move |evt| {
+                                            let value = evt.value();
+                                            let sequences: Vec<String> = value
+                                                .split(',')
+                                                .map(|s| s.trim().to_string())
+                                                .filter(|s| !s.is_empty())
+                                                .collect();
+                                            llm_config.with_mut(|cfg| cfg.stop_sequences = sequences);
+                                        }
+                                    }
+                                    div {
+                                        class: PARAM_ICON_BUTTON_CLASS,
+                                        onclick: move |_| show_stop_sequences_info.set(true),
+                                        InfoIcon {}
+                                    }
+                                }
+                            }
+                            div { class: PARAM_BLOCK_CLASS,
+                                label { class: PARAM_LABEL_CLASS, "mirostat" }
+                                div { class: PARAM_INPUT_ROW_CLASS,
+                                    select {
+                                        class: "select select-xs select-bordered bg-gray-700 text-gray-200",
+                                        value: llm_config().mirostat.to_string(),
+                                        disabled: llm_loading(),
+                                        onchange: move |evt| {
+                                            if let Ok(val) = evt.value().parse::<i32>() {
+                                                llm_config.with_mut(|cfg| cfg.mirostat = val);
+                                            }
+                                        },
+                                        option { value: "0", "0 • uit" }
+                                        option { value: "1", "1 • adaptief (v1)" }
+                                        option { value: "2", "2 • adaptief (v2)" }
+                                    }
+                                    div {
+                                        class: PARAM_ICON_BUTTON_CLASS,
+                                        onclick: move |_| show_mirostat_info.set(true),
+                                        InfoIcon {}
+                                    }
+                                }
+                            }
+                            div { class: PARAM_BLOCK_CLASS,
+                                label { class: PARAM_LABEL_CLASS, "mirostat_eta" }
+                                div { class: PARAM_INPUT_ROW_CLASS,
+                                    input {
+                                        r#type: "number",
+                                        class: PARAM_NUMBER_INPUT_CLASS,
+                                        value: llm_config().mirostat_eta.to_string(),
+                                        step: "0.01",
+                                        min: "0",
+                                        max: "1",
+                                        disabled: llm_loading(),
+                                        oninput: move |evt| {
+                                            if let Some(val) = parse_f32(&evt.value()) {
+                                                llm_config.with_mut(|cfg| cfg.mirostat_eta = val);
+                                            }
+                                        }
+                                    }
+                                    div {
+                                        class: PARAM_ICON_BUTTON_CLASS,
+                                        onclick: move |_| show_mirostat_eta_info.set(true),
+                                        InfoIcon {}
+                                    }
+                                }
+                            }
+                            div { class: PARAM_BLOCK_CLASS,
+                                label { class: PARAM_LABEL_CLASS, "mirostat_tau" }
+                                div { class: PARAM_INPUT_ROW_CLASS,
+                                    input {
+                                        r#type: "number",
+                                        class: PARAM_NUMBER_INPUT_CLASS,
+                                        value: llm_config().mirostat_tau.to_string(),
+                                        step: "0.1",
+                                        min: "0",
+                                        max: "10",
+                                        disabled: llm_loading(),
+                                        oninput: move |evt| {
+                                            if let Some(val) = parse_f32(&evt.value()) {
+                                                llm_config.with_mut(|cfg| cfg.mirostat_tau = val);
+                                            }
+                                        }
+                                    }
+                                    div {
+                                        class: PARAM_ICON_BUTTON_CLASS,
+                                        onclick: move |_| show_mirostat_tau_info.set(true),
+                                        InfoIcon {}
+                                    }
                                 }
                             }
                         }
@@ -468,7 +690,52 @@ pub fn ConfigSampling() -> Element {
                 { info_modal("Stop sequences", show_stop_sequences_info.clone(), vec![
                     "Stop sequences are strings that tell the model to stop generating as soon as one of them is encountered. When the model produces any of these sequences, generation immediately halts.",
                     "This is useful for controlling output structure. For example, if you're generating a list, you might use a stop sequence like \"11.\" to limit the list to 10 items. For dialogue, you might stop at a specific character's name.",
-                    "Enter multiple stop sequences separated by commas. Common examples include: END, ###, \n\n (double newline), or custom markers like [DONE].",
+                    "Enter multiple stop sequences separated by commas. Common examples include: </s>, <|endoftext|>, <|im_end|>, <|end|>, ###, or custom markers like [DONE].",
+                    "Note: The appropriate stop sequences depend on the model used. Different models use different end-of-sequence tokens (e.g., Llama uses </s>, GPT models use <|endoftext|>, Phi-3 uses <|end|>).",
+                    "⚠️ Warning: Be careful with role markers like <|user|> or <|assistant|> as stop sequences. They can cause premature stopping if the model legitimately outputs them (e.g., in dialogues). Stick to true end tokens like <|end|> or </s> for safest results. Ollama usually configures the right defaults in the Modelfile.",
+                ]) }
+            }
+            if show_min_p_info() {
+                { info_modal("min_p", show_min_p_info.clone(), vec![
+                    "min_p is an alternative nucleus cutoff: tokens below this minimum probability are ignored before sampling continues.",
+                    "Educational link: comparing it with top-p teaches how probability mass can be trimmed from either the top or the bottom of the distribution.",
+                ]) }
+            }
+            if show_typical_p_info() {
+                { info_modal("typical_p", show_typical_p_info.clone(), vec![
+                    "Typical sampling keeps tokens whose cumulative surprise (entropy) is below this threshold.",
+                    "Educational value: illustrates entropy-driven sampling and why some models prefer \"typical\" tokens over purely likely ones.",
+                ]) }
+            }
+            if show_tfs_z_info() {
+                { info_modal("tfs_z", show_tfs_z_info.clone(), vec![
+                    "Tail Free Sampling removes the long tail of the distribution until the remaining mass reaches z.",
+                    "Educational link: demonstrates how trimming heavy tails affects diversity versus coherence.",
+                ]) }
+            }
+            if show_mirostat_info() {
+                { info_modal("Mirostat", show_mirostat_info.clone(), vec![
+                    "Mirostat is an adaptive sampling algorithm that tries to keep the surprise (entropy) near a target value.",
+                    "Set 0 to disable, 1 for the v1 algorithm, or 2 for v2.",
+                    "Educational value: shows how adaptive controllers keep sampling stable over long generations.",
+                ]) }
+            }
+            if show_mirostat_eta_info() {
+                { info_modal("mirostat_eta", show_mirostat_eta_info.clone(), vec![
+                    "Eta is the learning rate for Mirostat: higher values react faster but can overshoot.",
+                    "Educational value: connects eta to standard optimization / control theory concepts.",
+                ]) }
+            }
+            if show_mirostat_tau_info() {
+                { info_modal("mirostat_tau", show_mirostat_tau_info.clone(), vec![
+                    "Tau is the target entropy that Mirostat tries to maintain.",
+                    "Educational value: demonstrates how steering entropy changes model behaviour (creative vs focused).",
+                ]) }
+            }
+            if show_repeat_last_n_info() {
+                { info_modal("repeat_last_n", show_repeat_last_n_info.clone(), vec![
+                    "repeat_last_n decides how many of the last tokens are considered when applying repetition penalties.",
+                    "Educational value: frames the penalty as a moving \"memory span\" that controls how far back the model looks when discouraging repeats.",
                 ]) }
             }
         }

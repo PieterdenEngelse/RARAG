@@ -1,6 +1,10 @@
-use crate::{api, app::Route, components::config_nav::{ConfigNav, ConfigTab}, components::monitor::*};
+use crate::{
+    api,
+    app::Route,
+    components::config_nav::{ConfigNav, ConfigTab},
+    components::monitor::*,
+};
 use dioxus::prelude::*;
-
 
 #[derive(Clone, Debug)]
 struct ChunkPreset {
@@ -43,42 +47,36 @@ fn chunk_categories() -> Vec<ChunkCategory> {
         },
         ChunkCategory {
             description: "Functions are self-contained:",
-            presets: vec![
-                ChunkPreset {
-                    key: "512".into(),
-                    target_size: 512,
-                    min_size: 256,
-                    max_size: 768,
-                    overlap: 64,
-                    semantic_threshold: 0.78,
-                },
-            ],
+            presets: vec![ChunkPreset {
+                key: "512".into(),
+                target_size: 512,
+                min_size: 256,
+                max_size: 768,
+                overlap: 64,
+                semantic_threshold: 0.78,
+            }],
         },
         ChunkCategory {
             description: "Concepts need context:",
-            presets: vec![
-                ChunkPreset {
-                    key: "768".into(),
-                    target_size: 768,
-                    min_size: 384,
-                    max_size: 1024,
-                    overlap: 96,
-                    semantic_threshold: 0.78,
-                },
-            ],
+            presets: vec![ChunkPreset {
+                key: "768".into(),
+                target_size: 768,
+                min_size: 384,
+                max_size: 1024,
+                overlap: 96,
+                semantic_threshold: 0.78,
+            }],
         },
         ChunkCategory {
             description: "Clauses need full context:",
-            presets: vec![
-                ChunkPreset {
-                    key: "1024".into(),
-                    target_size: 1024,
-                    min_size: 512,
-                    max_size: 1536,
-                    overlap: 128,
-                    semantic_threshold: 0.82,
-                },
-            ],
+            presets: vec![ChunkPreset {
+                key: "1024".into(),
+                target_size: 1024,
+                min_size: 512,
+                max_size: 1536,
+                overlap: 128,
+                semantic_threshold: 0.82,
+            }],
         },
     ]
 }

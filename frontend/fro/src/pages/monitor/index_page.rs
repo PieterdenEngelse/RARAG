@@ -151,8 +151,8 @@ pub fn MonitorIndex() -> Element {
     }
 
     {
-        let mut state = state.clone();
-        let mut jobs = jobs.clone();
+        let state = state.clone();
+        let jobs = jobs.clone();
         use_future(move || async move {
             loop {
                 refresh_job_statuses(jobs.clone(), state.clone(), false).await;
@@ -169,7 +169,7 @@ pub fn MonitorIndex() -> Element {
     }
 
     let trigger_sync_reindex = {
-        let mut state = state.clone();
+        let state = state.clone();
         Rc::new(move |_| {
             let mut state = state.clone();
             spawn(async move {
@@ -196,8 +196,8 @@ pub fn MonitorIndex() -> Element {
     };
 
     let trigger_async_reindex = {
-        let mut state = state.clone();
-        let mut jobs = jobs.clone();
+        let state = state.clone();
+        let jobs = jobs.clone();
         Rc::new(move |_| {
             let mut state = state.clone();
             let mut jobs = jobs.clone();
@@ -305,7 +305,7 @@ pub fn MonitorIndex() -> Element {
                                                 button {
                                                     class: "text-[11px] px-3 py-1 rounded border border-slate-500 text-slate-200 hover:bg-slate-600/20 disabled:opacity-40",
                                                     onclick: {
-                                                        let mut state = state.clone();
+                                                        let state = state.clone();
                                                         move |_| {
                                                             let mut state = state.clone();
                                                             spawn(async move {
@@ -566,7 +566,7 @@ pub fn MonitorIndex() -> Element {
                                     multiple: true,
                                     disabled: snapshot.upload_running,
                                     onchange: {
-                                        let mut state = state.clone();
+                                        let state = state.clone();
                                         move |evt: dioxus::prelude::Event<dioxus::prelude::FormData>| {
                                             let mut state = state.clone();
                                             spawn(async move {
@@ -979,7 +979,7 @@ fn copy_text_to_clipboard(text: &str) {
 }
 
 async fn refresh_job_statuses(
-    mut jobs: Signal<Vec<ReindexJobRow>>,
+    jobs: Signal<Vec<ReindexJobRow>>,
     mut state: Signal<IndexState>,
     include_terminal: bool,
 ) {

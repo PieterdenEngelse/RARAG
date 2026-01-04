@@ -1,4 +1,8 @@
-use crate::{app::Route, components::config_nav::{ConfigNav, ConfigTab}, components::monitor::*};
+use crate::{
+    app::Route,
+    components::config_nav::{ConfigNav, ConfigTab},
+    components::monitor::*,
+};
 use dioxus::prelude::*;
 
 #[component]

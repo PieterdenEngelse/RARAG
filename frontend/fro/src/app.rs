@@ -5,7 +5,6 @@ use crate::pages::{
     Parameters,
 };
 use dioxus::prelude::*;
-use dioxus_router::prelude::*;
 
 #[derive(Routable, Clone, PartialEq)]
 #[rustfmt::skip]

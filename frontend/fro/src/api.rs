@@ -140,6 +140,7 @@ pub struct ChunkCommitRequest {
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
+#[serde(default)]
 pub struct LlmConfig {
     pub temperature: f32,
     pub top_p: f32,
@@ -150,6 +151,13 @@ pub struct LlmConfig {
     pub presence_penalty: f32,
     pub stop_sequences: Vec<String>,
     pub seed: Option<i64>,
+    pub min_p: f32,
+    pub typical_p: f32,
+    pub tfs_z: f32,
+    pub mirostat: i32,
+    pub mirostat_eta: f32,
+    pub mirostat_tau: f32,
+    pub repeat_last_n: usize,
 }
 
 impl Default for LlmConfig {
@@ -164,7 +172,178 @@ impl Default for LlmConfig {
             presence_penalty: 0.0,
             stop_sequences: Vec::new(),
             seed: None,
+            min_p: 0.0,
+            typical_p: 1.0,
+            tfs_z: 1.0,
+            mirostat: 0,
+            mirostat_eta: 0.1,
+            mirostat_tau: 5.0,
+            repeat_last_n: 64,
         }
+    }
+}
+
+/// Supported LLM inference backends
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum BackendType {
+    #[default]
+    Ollama,
+    LlamaCpp,
+    #[serde(rename = "openai")]
+    OpenAi,
+    Anthropic,
+    Vllm,
+    Custom,
+}
+
+impl BackendType {
+    /// Returns true if this backend supports local hardware configuration
+    pub fn supports_hardware_config(&self) -> bool {
+        matches!(self, Self::LlamaCpp | Self::Vllm)
+    }
+
+    /// Returns true if this backend supports thread configuration
+    pub fn supports_thread_config(&self) -> bool {
+        matches!(self, Self::Ollama | Self::LlamaCpp)
+    }
+
+    /// Returns true if this backend supports GPU configuration (num_gpu)
+    pub fn supports_gpu_config(&self) -> bool {
+        matches!(self, Self::Ollama | Self::LlamaCpp | Self::Vllm)
+    }
+
+    /// Returns true if this backend supports GPU layer offloading (n_gpu_layers)
+    pub fn supports_gpu_layers(&self) -> bool {
+        matches!(self, Self::LlamaCpp | Self::Vllm)
+    }
+
+    /// Returns true if this backend supports RoPE configuration
+    pub fn supports_rope_config(&self) -> bool {
+        matches!(self, Self::LlamaCpp)
+    }
+
+    /// Returns true if this backend supports low_vram and f16_kv options
+    pub fn supports_memory_options(&self) -> bool {
+        matches!(self, Self::LlamaCpp)
+    }
+
+    /// Returns true if this is a cloud/API-based backend
+    pub fn is_cloud_backend(&self) -> bool {
+        matches!(self, Self::OpenAi | Self::Anthropic)
+    }
+
+    /// Human-readable label for the backend
+    pub fn label(&self) -> &'static str {
+        match self {
+            Self::Ollama => "Ollama 0.12.6",
+            Self::LlamaCpp => "llama.cpp",
+            Self::OpenAi => "OpenAI",
+            Self::Anthropic => "Anthropic",
+            Self::Vllm => "vLLM",
+            Self::Custom => "Custom",
+        }
+    }
+
+    /// All available backend types
+    pub fn all() -> Vec<BackendType> {
+        vec![
+            Self::Ollama,
+            Self::LlamaCpp,
+            Self::OpenAi,
+            Self::Anthropic,
+            Self::Vllm,
+            Self::Custom,
+        ]
+    }
+
+    /// Convert to API string representation
+    pub fn to_api_string(&self) -> &'static str {
+        match self {
+            Self::Ollama => "ollama",
+            Self::LlamaCpp => "llama_cpp",
+            Self::OpenAi => "openai",
+            Self::Anthropic => "anthropic",
+            Self::Vllm => "vllm",
+            Self::Custom => "custom",
+        }
+    }
+
+    /// Parse from API string representation
+    pub fn from_api_string(s: &str) -> Self {
+        match s {
+            "ollama" => Self::Ollama,
+            "llama_cpp" => Self::LlamaCpp,
+            "openai" => Self::OpenAi,
+            "anthropic" => Self::Anthropic,
+            "vllm" => Self::Vllm,
+            "custom" => Self::Custom,
+            _ => Self::Ollama,
+        }
+    }
+}
+
+impl std::fmt::Display for BackendType {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.label())
+    }
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
+#[serde(default)]
+pub struct HardwareConfig {
+    pub backend_type: String,
+    pub model: String,
+    pub num_thread: usize,
+    pub num_gpu: usize,
+    pub gpu_layers: usize,
+    pub main_gpu: usize,
+    pub low_vram: bool,
+    pub f16_kv: bool,
+    pub rope_frequency_base: f32,
+    pub rope_frequency_scale: f32,
+    pub numa: bool,
+    pub num_ctx: usize,
+    pub num_batch: usize,
+    pub logits_all: bool,
+    pub vocab_only: bool,
+    pub use_mmap: bool,
+    pub use_mlock: bool,
+}
+
+impl Default for HardwareConfig {
+    fn default() -> Self {
+        Self {
+            backend_type: "ollama".to_string(),
+            model: String::new(),
+            num_thread: 1,
+            num_gpu: 0,
+            gpu_layers: 0,
+            main_gpu: 0,
+            low_vram: false,
+            f16_kv: true,
+            rope_frequency_base: 10_000.0,
+            rope_frequency_scale: 1.0,
+            numa: false,
+            num_ctx: 2048,
+            num_batch: 512,
+            logits_all: false,
+            vocab_only: false,
+            use_mmap: true,
+            use_mlock: false,
+        }
+    }
+}
+
+impl HardwareConfig {
+    /// Get the backend type as enum
+    pub fn get_backend_type(&self) -> BackendType {
+        BackendType::from_api_string(&self.backend_type)
+    }
+
+    /// Set the backend type from enum
+    pub fn set_backend_type(&mut self, bt: BackendType) {
+        self.backend_type = bt.to_api_string().to_string();
     }
 }
 
@@ -174,6 +353,35 @@ pub struct LlmConfigResponse {
     pub message: String,
     pub request_id: String,
     pub config: LlmConfig,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct HardwareConfigResponse {
+    pub status: String,
+    pub message: String,
+    pub request_id: String,
+    pub config: HardwareConfig,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone, Default)]
+pub struct ApiKeysRequest {
+    #[serde(default)]
+    pub openai_api_key: String,
+    #[serde(default)]
+    pub anthropic_api_key: String,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone, Default)]
+pub struct ApiKeysResponse {
+    pub status: String,
+    pub message: String,
+    pub request_id: String,
+    pub has_openai_key: bool,
+    pub has_anthropic_key: bool,
+    pub openai_key_masked: String,
+    pub anthropic_key_masked: String,
+    pub openai_from_env: bool,
+    pub anthropic_from_env: bool,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -268,6 +476,79 @@ pub struct LogsResponse {
     pub file: Option<String>,
     pub entries: Vec<LogEntry>,
     pub note: Option<String>,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
+pub struct GpuInfo {
+    pub index: usize,
+    pub name: String,
+    pub vendor: String,
+    pub backend: String,
+    pub device_type: String,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
+pub struct SystemInfo {
+    pub os: String,
+    pub os_family: String,
+    pub arch: String,
+    pub physical_cores: usize,
+    pub logical_cores: usize,
+}
+
+/// Model information returned by the models endpoint
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
+pub struct ModelInfo {
+    pub name: String,
+    #[serde(default)]
+    pub size: Option<u64>,
+    #[serde(default)]
+    pub modified_at: Option<String>,
+    #[serde(default)]
+    pub family: Option<String>,
+}
+
+impl ModelInfo {
+    /// Format size in human-readable format (e.g., "3.8 GB")
+    pub fn size_display(&self) -> String {
+        match self.size {
+            Some(bytes) => {
+                let gb = bytes as f64 / 1_073_741_824.0;
+                if gb >= 1.0 {
+                    format!("{:.1} GB", gb)
+                } else {
+                    let mb = bytes as f64 / 1_048_576.0;
+                    format!("{:.1} MB", mb)
+                }
+            }
+            None => String::new(),
+        }
+    }
+}
+
+pub async fn fetch_physical_cores() -> Result<usize, String> {
+    fetch_json::<usize>("/sys/cores").await
+}
+
+/// Fetch detailed GPU information
+pub async fn fetch_gpus() -> Result<Vec<GpuInfo>, String> {
+    fetch_json::<Vec<GpuInfo>>("/sys/gpus").await
+}
+
+/// Fetch simple GPU names list (backward compatible)
+pub async fn fetch_gpu_names() -> Result<Vec<String>, String> {
+    fetch_json::<Vec<String>>("/sys/gpu-names").await
+}
+
+/// Fetch system information including OS, architecture, and CPU cores
+pub async fn fetch_system_info() -> Result<SystemInfo, String> {
+    fetch_json::<SystemInfo>("/sys/info").await
+}
+
+/// Fetch available models for a given backend type
+pub async fn fetch_models(backend: &str) -> Result<Vec<ModelInfo>, String> {
+    let url = format!("/sys/models?backend={}", backend);
+    fetch_json::<Vec<ModelInfo>>(&url).await
 }
 
 /// Check backend health
@@ -379,6 +660,61 @@ pub async fn commit_llm_config(payload: &LlmConfig) -> Result<LlmConfigResponse,
                 .map_err(|e| format!("Failed to serialize payload: {}", e))?,
         )
         .map_err(|e| format!("Failed to build request: {}", e))?
+        .send()
+        .await
+        .map_err(|e| format!("Request failed: {}", e))?
+        .json()
+        .await
+        .map_err(|e| format!("Failed to parse response: {}", e))
+}
+
+pub async fn fetch_hardware_config() -> Result<HardwareConfigResponse, String> {
+    fetch_json::<HardwareConfigResponse>("/config/hardware").await
+}
+
+pub async fn commit_hardware_config(
+    payload: &HardwareConfig,
+) -> Result<HardwareConfigResponse, String> {
+    let url = format!("{}/config/hardware", API_BASE_URL);
+    gloo_net::http::Request::post(&url)
+        .header("Content-Type", "application/json")
+        .body(
+            serde_json::to_string(payload)
+                .map_err(|e| format!("Failed to serialize payload: {}", e))?,
+        )
+        .map_err(|e| format!("Failed to build request: {}", e))?
+        .send()
+        .await
+        .map_err(|e| format!("Request failed: {}", e))?
+        .json()
+        .await
+        .map_err(|e| format!("Failed to parse response: {}", e))
+}
+
+pub async fn fetch_api_keys() -> Result<ApiKeysResponse, String> {
+    fetch_json::<ApiKeysResponse>("/config/api_keys").await
+}
+
+pub async fn save_api_keys(payload: &ApiKeysRequest) -> Result<ApiKeysResponse, String> {
+    let url = format!("{}/config/api_keys", API_BASE_URL);
+    gloo_net::http::Request::post(&url)
+        .header("Content-Type", "application/json")
+        .body(
+            serde_json::to_string(payload)
+                .map_err(|e| format!("Failed to serialize payload: {}", e))?,
+        )
+        .map_err(|e| format!("Failed to build request: {}", e))?
+        .send()
+        .await
+        .map_err(|e| format!("Request failed: {}", e))?
+        .json()
+        .await
+        .map_err(|e| format!("Failed to parse response: {}", e))
+}
+
+pub async fn delete_api_key(provider: &str) -> Result<serde_json::Value, String> {
+    let url = format!("{}/config/api_keys/{}", API_BASE_URL, provider);
+    gloo_net::http::Request::delete(&url)
         .send()
         .await
         .map_err(|e| format!("Request failed: {}", e))?

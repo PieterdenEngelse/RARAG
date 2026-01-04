@@ -12,6 +12,13 @@ pub const DEFAULT_MAX_TOKENS: usize = 1024;
 pub const DEFAULT_REPEAT_PENALTY: f32 = 1.1;
 pub const DEFAULT_FREQUENCY_PENALTY: f32 = 0.0;
 pub const DEFAULT_PRESENCE_PENALTY: f32 = 0.0;
+pub const DEFAULT_MIN_P: f32 = 0.0;
+pub const DEFAULT_TYPICAL_P: f32 = 1.0;
+pub const DEFAULT_TFS_Z: f32 = 1.0;
+pub const DEFAULT_MIROSTAT: i32 = 0;
+pub const DEFAULT_MIROSTAT_ETA: f32 = 0.1;
+pub const DEFAULT_MIROSTAT_TAU: f32 = 5.0;
+pub const DEFAULT_REPEAT_LAST_N: usize = 64;
 
 static GLOBAL_LLM_CONFIG: OnceLock<RwLock<LlmConfig>> = OnceLock::new();
 
@@ -25,6 +32,13 @@ static CONFIG_KEYS: LlmConfigKeys = LlmConfigKeys {
     presence_penalty: "llm_presence_penalty",
     stop_sequences: "llm_stop_sequences",
     seed: "llm_seed",
+    min_p: "llm_min_p",
+    typical_p: "llm_typical_p",
+    tfs_z: "llm_tfs_z",
+    mirostat: "llm_mirostat",
+    mirostat_eta: "llm_mirostat_eta",
+    mirostat_tau: "llm_mirostat_tau",
+    repeat_last_n: "llm_repeat_last_n",
 };
 
 struct LlmConfigKeys {
@@ -37,6 +51,13 @@ struct LlmConfigKeys {
     presence_penalty: &'static str,
     stop_sequences: &'static str,
     seed: &'static str,
+    min_p: &'static str,
+    typical_p: &'static str,
+    tfs_z: &'static str,
+    mirostat: &'static str,
+    mirostat_eta: &'static str,
+    mirostat_tau: &'static str,
+    repeat_last_n: &'static str,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -50,6 +71,13 @@ pub struct LlmConfig {
     pub presence_penalty: f32,
     pub stop_sequences: Vec<String>,
     pub seed: Option<i64>,
+    pub min_p: f32,
+    pub typical_p: f32,
+    pub tfs_z: f32,
+    pub mirostat: i32,
+    pub mirostat_eta: f32,
+    pub mirostat_tau: f32,
+    pub repeat_last_n: usize,
 }
 
 impl Default for LlmConfig {
@@ -64,6 +92,13 @@ impl Default for LlmConfig {
             presence_penalty: DEFAULT_PRESENCE_PENALTY,
             stop_sequences: Vec::new(),
             seed: None,
+            min_p: DEFAULT_MIN_P,
+            typical_p: DEFAULT_TYPICAL_P,
+            tfs_z: DEFAULT_TFS_Z,
+            mirostat: DEFAULT_MIROSTAT,
+            mirostat_eta: DEFAULT_MIROSTAT_ETA,
+            mirostat_tau: DEFAULT_MIROSTAT_TAU,
+            repeat_last_n: DEFAULT_REPEAT_LAST_N,
         }
     }
 }
@@ -117,6 +152,27 @@ pub fn load_llm_config(conn: &Connection) -> Result<LlmConfig> {
         .map(|v| serde_json::from_str(&v).unwrap_or_default())
         .unwrap_or_default();
     let seed = read_int(conn, CONFIG_KEYS.seed)?;
+    let min_p = read_float(conn, CONFIG_KEYS.min_p)?
+        .map(|v| v as f32)
+        .unwrap_or(DEFAULT_MIN_P);
+    let typical_p = read_float(conn, CONFIG_KEYS.typical_p)?
+        .map(|v| v as f32)
+        .unwrap_or(DEFAULT_TYPICAL_P);
+    let tfs_z = read_float(conn, CONFIG_KEYS.tfs_z)?
+        .map(|v| v as f32)
+        .unwrap_or(DEFAULT_TFS_Z);
+    let mirostat = read_int(conn, CONFIG_KEYS.mirostat)?
+        .map(|v| v as i32)
+        .unwrap_or(DEFAULT_MIROSTAT);
+    let mirostat_eta = read_float(conn, CONFIG_KEYS.mirostat_eta)?
+        .map(|v| v as f32)
+        .unwrap_or(DEFAULT_MIROSTAT_ETA);
+    let mirostat_tau = read_float(conn, CONFIG_KEYS.mirostat_tau)?
+        .map(|v| v as f32)
+        .unwrap_or(DEFAULT_MIROSTAT_TAU);
+    let repeat_last_n = read_int(conn, CONFIG_KEYS.repeat_last_n)?
+        .map(|v| v as usize)
+        .unwrap_or(DEFAULT_REPEAT_LAST_N);
 
     Ok(LlmConfig {
         temperature,
@@ -128,6 +184,13 @@ pub fn load_llm_config(conn: &Connection) -> Result<LlmConfig> {
         presence_penalty,
         stop_sequences,
         seed,
+        min_p,
+        typical_p,
+        tfs_z,
+        mirostat,
+        mirostat_eta,
+        mirostat_tau,
+        repeat_last_n,
     })
 }
 
@@ -164,6 +227,17 @@ pub fn save_llm_config(conn: &Connection, cfg: &LlmConfig) -> Result<()> {
     } else {
         delete_value(conn, CONFIG_KEYS.seed)?;
     }
+    write_value(conn, CONFIG_KEYS.min_p, cfg.min_p.to_string())?;
+    write_value(conn, CONFIG_KEYS.typical_p, cfg.typical_p.to_string())?;
+    write_value(conn, CONFIG_KEYS.tfs_z, cfg.tfs_z.to_string())?;
+    write_value(conn, CONFIG_KEYS.mirostat, cfg.mirostat.to_string())?;
+    write_value(conn, CONFIG_KEYS.mirostat_eta, cfg.mirostat_eta.to_string())?;
+    write_value(conn, CONFIG_KEYS.mirostat_tau, cfg.mirostat_tau.to_string())?;
+    write_value(
+        conn,
+        CONFIG_KEYS.repeat_last_n,
+        cfg.repeat_last_n.to_string(),
+    )?;
 
     conn.execute("COMMIT", []).map_err(db_err)?;
     *config_lock().write().unwrap() = cfg.clone();
@@ -279,7 +353,17 @@ mod tests {
             top_k: 50,
             max_tokens: 2048,
             repeat_penalty: 1.2,
+            frequency_penalty: 0.1,
+            presence_penalty: 0.2,
+            stop_sequences: vec!["\n".to_string()],
             seed: Some(42),
+            min_p: 0.2,
+            typical_p: 0.85,
+            tfs_z: 0.7,
+            mirostat: 1,
+            mirostat_eta: 0.12,
+            mirostat_tau: 6.0,
+            repeat_last_n: 128,
         };
         save_llm_config(&conn, &cfg).unwrap();
         let loaded = load_llm_config(&conn).unwrap();
@@ -289,6 +373,13 @@ mod tests {
         assert_eq!(loaded.max_tokens, 2048);
         assert!((loaded.repeat_penalty - 1.2).abs() < f32::EPSILON);
         assert_eq!(loaded.seed, Some(42));
+        assert!((loaded.min_p - 0.2).abs() < f32::EPSILON);
+        assert!((loaded.typical_p - 0.85).abs() < f32::EPSILON);
+        assert!((loaded.tfs_z - 0.7).abs() < f32::EPSILON);
+        assert_eq!(loaded.mirostat, 1);
+        assert!((loaded.mirostat_eta - 0.12).abs() < f32::EPSILON);
+        assert!((loaded.mirostat_tau - 6.0).abs() < f32::EPSILON);
+        assert_eq!(loaded.repeat_last_n, 128);
     }
 
     #[test]

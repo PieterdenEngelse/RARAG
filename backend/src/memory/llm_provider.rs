@@ -90,6 +90,20 @@ struct OllamaOptions {
     num_predict: Option<i32>,
     #[serde(skip_serializing_if = "Option::is_none")]
     seed: Option<i64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    min_p: Option<f32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    typical_p: Option<f32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    tfs_z: Option<f32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    mirostat: Option<i32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    mirostat_eta: Option<f32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    mirostat_tau: Option<f32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    repeat_last_n: Option<i32>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     stop: Vec<String>,
 }
@@ -105,6 +119,13 @@ impl From<&LlmConfig> for OllamaOptions {
             presence_penalty: Some(cfg.presence_penalty),
             num_predict: Some(cfg.max_tokens as i32),
             seed: cfg.seed,
+            min_p: Some(cfg.min_p),
+            typical_p: Some(cfg.typical_p),
+            tfs_z: Some(cfg.tfs_z),
+            mirostat: Some(cfg.mirostat),
+            mirostat_eta: Some(cfg.mirostat_eta),
+            mirostat_tau: Some(cfg.mirostat_tau),
+            repeat_last_n: Some(cfg.repeat_last_n as i32),
             stop: cfg.stop_sequences.clone(),
         }
     }

@@ -1,7 +1,10 @@
 pub mod path_manager;
 pub mod db {
+    pub mod api_keys;
     pub mod chunk_settings;
     pub mod llm_settings;
+    pub mod param_hardware;
+    pub mod param_store;
     pub mod schema_init;
 }
 pub mod agent;

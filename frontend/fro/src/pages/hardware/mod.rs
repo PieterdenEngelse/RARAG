@@ -1,3 +1,14 @@
+mod components;
+mod constants;
+mod help_content;
+mod helpers;
+pub mod state;
+
+use components::{info_modal, InfoIcon};
+use constants::*;
+use help_content::HelpTopic;
+use helpers::{format_gpu_label, format_model_label};
+
 use crate::{
     api::{self, BackendType},
     app::Route,
@@ -6,138 +17,59 @@ use crate::{
 };
 use dioxus::prelude::*;
 
-const PARAM_BLOCK_CLASS: &str = "flex flex-col gap-1 text-xs text-gray-200";
-const PARAM_BLOCK_CLASS_TIGHT: &str = "flex flex-col text-xs text-gray-200";
-const PARAM_COLUMN_CLASS: &str = "param-column-spacing";
-const PARAM_INPUT_ROW_CLASS: &str = "flex items-end gap-2";
-const PARAM_LABEL_CLASS: &str = "text-gray-400 whitespace-nowrap";
-const PARAM_LABEL_CLASS_TIGHT: &str = "text-gray-400 whitespace-nowrap inline-block mb-[-1.5mm]";
-const PARAM_ICON_BUTTON_CLASS: &str =
-    "w-6 h-6 min-w-6 min-h-6 shrink-0 rounded border border-blue-500/40 bg-blue-500/10 flex items-center justify-center cursor-pointer hover:bg-blue-500/20";
-const PARAM_NUMBER_INPUT_CLASS: &str =
-    "input input-xs input-bordered bg-gray-700 text-gray-200 !w-24";
-const PARAM_TEXT_INPUT_CLASS: &str = "input input-xs input-bordered bg-gray-700 text-gray-200 w-72";
-
-fn format_model_label(model: &api::ModelInfo) -> String {
-    let mut parts = vec![model.name.clone()];
-    if let Some(family) = &model.family {
-        if !family.is_empty() {
-            parts.push(format!("({})", family));
-        }
-    }
-    let size = model.size_display();
-    if !size.is_empty() {
-        parts.push(format!("- {}", size));
-    }
-    if let Some(modified) = &model.modified_at {
-        parts.push(format!("updated {}", modified));
-    }
-    parts.join(" ")
-}
-
-fn format_gpu_label(gpu: &api::GpuInfo) -> String {
-    format!(
-        "GPU {} · {} · {} ({})",
-        gpu.index, gpu.name, gpu.vendor, gpu.device_type
-    )
-}
-
-#[component]
-fn InfoIcon() -> Element {
-    rsx! {
-        svg {
-            class: "w-3 h-3 text-blue-400",
-            view_box: "0 0 20 20",
-            fill: "none",
-            stroke: "currentColor",
-            stroke_width: "2",
-            circle { cx: "10", cy: "10", r: "9" }
-            line { x1: "10", y1: "8", x2: "10", y2: "14" }
-            circle { cx: "10", cy: "6.3", r: "1", fill: "currentColor", stroke: "none" }
-        }
-    }
-}
-
-fn info_modal(title: &str, toggle: Signal<bool>, paragraphs: Vec<&str>) -> Element {
-    let mut toggle = toggle;
-    rsx! {
-        div {
-            class: "fixed inset-0 z-50 flex items-center justify-center bg-black/60",
-            onclick: move |_| toggle.set(false),
-            div {
-                class: "bg-gray-800 border border-gray-600 rounded-lg p-6 w-[90vw] max-w-[90vw] max-h-[95vh] overflow-y-auto shadow-xl",
-                onclick: move |evt| evt.stop_propagation(),
-                div { class: "flex items-center justify-between mb-4",
-                    h2 { class: "text-lg font-semibold text-gray-100", "{title}" }
-                    button {
-                        class: "text-gray-400 hover:text-gray-200 text-xl font-bold",
-                        onclick: move |_| toggle.set(false),
-                        "×"
-                    }
-                }
-                div { class: "text-sm text-gray-300 space-y-3",
-                    for paragraph in paragraphs {
-                        p { "{paragraph}" }
-                    }
-                }
-            }
-        }
-    }
-}
-
 #[component]
 pub fn ConfigHardware() -> Element {
     let mut hardware_config = use_signal(api::HardwareConfig::default);
-    let mut status = use_signal(|| Option::<String>::None);
-    let mut error = use_signal(|| Option::<String>::None);
+    let status = use_signal(|| Option::<String>::None);
+    let error = use_signal(|| Option::<String>::None);
     let loading = use_signal(|| false);
     let saving = use_signal(|| false);
 
-    let mut physical_cores = use_signal(|| Option::<usize>::None);
+    let physical_cores = use_signal(|| Option::<usize>::None);
     let gpus: Signal<Option<Vec<api::GpuInfo>>> = use_signal(|| None);
     let system_info: Signal<Option<api::SystemInfo>> = use_signal(|| None);
     let models: Signal<Vec<api::ModelInfo>> = use_signal(Vec::new);
     let models_loading = use_signal(|| false);
-    let mut model_error = use_signal(|| Option::<String>::None);
+    let model_error = use_signal(|| Option::<String>::None);
     let last_model_backend = use_signal(|| String::new());
 
-    let mut api_key_status = use_signal(|| Option::<String>::None);
-    let mut api_key_error = use_signal(|| Option::<String>::None);
-    let mut api_keys_loaded = use_signal(|| false);
-    let mut has_openai_key = use_signal(|| false);
-    let mut has_anthropic_key = use_signal(|| false);
-    let mut openai_masked = use_signal(String::new);
-    let mut anthropic_masked = use_signal(String::new);
-    let mut openai_from_env = use_signal(|| false);
-    let mut anthropic_from_env = use_signal(|| false);
-    let mut openai_input = use_signal(String::new);
-    let mut anthropic_input = use_signal(String::new);
+    let api_key_status = use_signal(|| Option::<String>::None);
+    let api_key_error = use_signal(|| Option::<String>::None);
+    let api_keys_loaded = use_signal(|| false);
+    let has_openai_key = use_signal(|| false);
+    let has_anthropic_key = use_signal(|| false);
+    let openai_masked = use_signal(String::new);
+    let anthropic_masked = use_signal(String::new);
+    let openai_from_env = use_signal(|| false);
+    let anthropic_from_env = use_signal(|| false);
+    let openai_input = use_signal(String::new);
+    let anthropic_input = use_signal(String::new);
     let saving_keys = use_signal(|| false);
     let mut show_api_key_values = use_signal(|| false);
 
-    let mut show_backend_info = use_signal(|| false);
-    let mut show_model_info = use_signal(|| false);
-    let mut show_num_thread_info = use_signal(|| false);
+    let show_backend_info = use_signal(|| false);
+    let show_model_info = use_signal(|| false);
+    let show_num_thread_info = use_signal(|| false);
 
-    let mut anthropic_llm_config = use_signal(api::LlmConfig::default);
-    let mut anthropic_llm_loading = use_signal(|| false);
-    let mut anthropic_llm_error = use_signal(|| Option::<String>::None);
-    let mut show_num_gpu_info = use_signal(|| false);
-    let mut show_gpu_layers_info = use_signal(|| false);
-    let mut show_main_gpu_info = use_signal(|| false);
-    let mut show_rope_base_info = use_signal(|| false);
-    let mut show_rope_scale_info = use_signal(|| false);
-    let mut show_low_vram_info = use_signal(|| false);
-    let mut show_f16_kv_info = use_signal(|| false);
-    let mut show_num_batch_info = use_signal(|| false);
-    let mut show_num_ctx_info = use_signal(|| false);
-    let mut show_numa_info = use_signal(|| false);
-    let mut show_mmap_info = use_signal(|| false);
-    let mut show_mlock_info = use_signal(|| false);
-    let mut show_logits_all_info = use_signal(|| false);
-    let mut show_vocab_only_info = use_signal(|| false);
-    let mut show_reload_info = use_signal(|| false);
-    let mut show_rope_tuning_info = use_signal(|| false);
+    let anthropic_llm_config = use_signal(api::LlmConfig::default);
+    let anthropic_llm_loading = use_signal(|| false);
+    let anthropic_llm_error = use_signal(|| Option::<String>::None);
+    let show_num_gpu_info = use_signal(|| false);
+    let show_gpu_layers_info = use_signal(|| false);
+    let show_main_gpu_info = use_signal(|| false);
+    let show_rope_base_info = use_signal(|| false);
+    let show_rope_scale_info = use_signal(|| false);
+    let show_low_vram_info = use_signal(|| false);
+    let show_f16_kv_info = use_signal(|| false);
+    let show_num_batch_info = use_signal(|| false);
+    let show_num_ctx_info = use_signal(|| false);
+    let show_numa_info = use_signal(|| false);
+    let show_mmap_info = use_signal(|| false);
+    let show_mlock_info = use_signal(|| false);
+    let show_logits_all_info = use_signal(|| false);
+    let show_vocab_only_info = use_signal(|| false);
+    let show_reload_info = use_signal(|| false);
+    let show_rope_tuning_info = use_signal(|| false);
 
     {
         let mut hardware_config = hardware_config.clone();
@@ -207,7 +139,8 @@ pub fn ConfigHardware() -> Element {
         let mut last_model_backend = last_model_backend.clone();
         use_effect(move || {
             let backend = hardware_config().backend_type.clone();
-            if backend == last_model_backend() {
+            // Use peek() to read without subscribing, avoiding read-write in same scope
+            if backend == last_model_backend.peek().clone() {
                 return;
             }
             last_model_backend.set(backend.clone());
@@ -309,12 +242,12 @@ pub fn ConfigHardware() -> Element {
         let openai_input = openai_input.clone();
         let anthropic_input = anthropic_input.clone();
         let mut saving_keys = saving_keys.clone();
-        let mut api_key_status = api_key_status.clone();
+        let api_key_status = api_key_status.clone();
         let mut api_key_error = api_key_error.clone();
-        let mut has_openai_key = has_openai_key.clone();
-        let mut has_anthropic_key = has_anthropic_key.clone();
-        let mut openai_masked = openai_masked.clone();
-        let mut anthropic_masked = anthropic_masked.clone();
+        let has_openai_key = has_openai_key.clone();
+        let has_anthropic_key = has_anthropic_key.clone();
+        let openai_masked = openai_masked.clone();
+        let anthropic_masked = anthropic_masked.clone();
         move |_| {
             if saving_keys() {
                 return;
@@ -433,7 +366,6 @@ pub fn ConfigHardware() -> Element {
     let mut vocab_only_info_signal = show_vocab_only_info.clone();
     let mut reload_info_signal = show_reload_info.clone();
     let mut rope_tuning_info_signal = show_rope_tuning_info.clone();
-    let mut api_key_values_signal = show_api_key_values.clone();
     let mut openai_input_signal = openai_input.clone();
     let mut anthropic_input_signal = anthropic_input.clone();
 
@@ -621,9 +553,11 @@ pub fn ConfigHardware() -> Element {
                 }
             }
 
-            Panel { title: Some("Runtime parameters".into()), refresh: None,
-                div { class: "flex flex-wrap gap-10 justify-start",
-                    // Column 1: Threading
+            Panel { title: None, refresh: None,
+                div { class: "rounded border border-gray-600 p-4 w-fit",
+                    span { class: "text-sm text-gray-300 font-semibold mb-3 block", "Model Loading" }
+                    div { class: "flex flex-wrap gap-10 justify-start",
+                        // Column 1: Threading
                     div { class: PARAM_COLUMN_CLASS,
                         span { class: "text-gray-300 font-semibold", "Threading" }
                         if supports_threads {
@@ -701,8 +635,16 @@ pub fn ConfigHardware() -> Element {
                     div { class: PARAM_COLUMN_CLASS,
                         span { class: "text-gray-300 font-semibold", "Memory" }
                         div { class: PARAM_BLOCK_CLASS,
-                            div { class: "flex items-center gap-2",
-                                label { class: "{PARAM_LABEL_CLASS} memory-label", "NUMA" }
+                            label { class: PARAM_LABEL_CLASS, "NUMA" }
+                            div { class: "flex items-end gap-2",
+                                input {
+                                    r#type: "checkbox",
+                                    class: "toggle toggle-sm",
+                                    checked: hardware_values.numa,
+                                    onchange: move |_| {
+                                        hardware_config.with_mut(|cfg| cfg.numa = !cfg.numa);
+                                    },
+                                }
                                 button {
                                     class: PARAM_ICON_BUTTON_CLASS,
                                     onclick: move |_| numa_info_signal.set(true),
@@ -710,18 +652,18 @@ pub fn ConfigHardware() -> Element {
                                     InfoIcon {}
                                 }
                             }
-                            input {
-                                r#type: "checkbox",
-                                class: "toggle toggle-sm",
-                                checked: hardware_values.numa,
-                                onchange: move |_| {
-                                    hardware_config.with_mut(|cfg| cfg.numa = !cfg.numa);
-                                },
-                            }
                         }
                         div { class: PARAM_BLOCK_CLASS,
-                            div { class: "flex items-center gap-2",
-                                label { class: "{PARAM_LABEL_CLASS} memory-label", "use_mmap" }
+                            label { class: PARAM_LABEL_CLASS, "use_mmap" }
+                            div { class: "flex items-end gap-2",
+                                input {
+                                    r#type: "checkbox",
+                                    class: "toggle toggle-sm",
+                                    checked: hardware_values.use_mmap,
+                                    onchange: move |_| {
+                                        hardware_config.with_mut(|cfg| cfg.use_mmap = !cfg.use_mmap);
+                                    },
+                                }
                                 button {
                                     class: PARAM_ICON_BUTTON_CLASS,
                                     onclick: move |_| mmap_info_signal.set(true),
@@ -729,32 +671,24 @@ pub fn ConfigHardware() -> Element {
                                     InfoIcon {}
                                 }
                             }
-                            input {
-                                r#type: "checkbox",
-                                class: "toggle toggle-sm",
-                                checked: hardware_values.use_mmap,
-                                onchange: move |_| {
-                                    hardware_config.with_mut(|cfg| cfg.use_mmap = !cfg.use_mmap);
-                                },
-                            }
                         }
                         div { class: PARAM_BLOCK_CLASS,
-                            div { class: "flex items-center gap-2",
-                                label { class: "{PARAM_LABEL_CLASS} memory-label", "use_mlock" }
+                            label { class: PARAM_LABEL_CLASS, "use_mlock" }
+                            div { class: "flex items-end gap-2",
+                                input {
+                                    r#type: "checkbox",
+                                    class: "toggle toggle-sm",
+                                    checked: hardware_values.use_mlock,
+                                    onchange: move |_| {
+                                        hardware_config.with_mut(|cfg| cfg.use_mlock = !cfg.use_mlock);
+                                    },
+                                }
                                 button {
                                     class: PARAM_ICON_BUTTON_CLASS,
                                     onclick: move |_| mlock_info_signal.set(true),
                                     title: "mlock help",
                                     InfoIcon {}
                                 }
-                            }
-                            input {
-                                r#type: "checkbox",
-                                class: "toggle toggle-sm",
-                                checked: hardware_values.use_mlock,
-                                onchange: move |_| {
-                                    hardware_config.with_mut(|cfg| cfg.use_mlock = !cfg.use_mlock);
-                                },
                             }
                         }
                     }
@@ -832,15 +766,12 @@ pub fn ConfigHardware() -> Element {
                                 }
                             }
                         }
-                    }
-
-                    // Column 4: Advanced
-                    div { class: PARAM_COLUMN_CLASS,
-                        span { class: "text-gray-300 font-semibold", "Advanced" }
+                        // Advanced options
+                        span { class: "text-gray-300 font-semibold mt-2", "Advanced" }
                         if supports_memory {
                             div { class: PARAM_BLOCK_CLASS,
                                 div { class: "flex items-center gap-2",
-                                    label { class: PARAM_LABEL_CLASS, "low_vram" }
+                                    label { class: "{PARAM_LABEL_CLASS} inline-block w-16", "low_vram" }
                                     button {
                                         class: PARAM_ICON_BUTTON_CLASS,
                                         onclick: move |_| low_vram_info_signal.set(true),
@@ -859,7 +790,7 @@ pub fn ConfigHardware() -> Element {
                             }
                             div { class: PARAM_BLOCK_CLASS,
                                 div { class: "flex items-center gap-2",
-                                    label { class: PARAM_LABEL_CLASS, "f16_kv" }
+                                    label { class: "{PARAM_LABEL_CLASS} inline-block w-16", "f16_kv" }
                                     button {
                                         class: PARAM_ICON_BUTTON_CLASS,
                                         onclick: move |_| f16_kv_info_signal.set(true),
@@ -879,7 +810,7 @@ pub fn ConfigHardware() -> Element {
                         }
                         div { class: PARAM_BLOCK_CLASS,
                             div { class: "flex items-center gap-2",
-                                label { class: PARAM_LABEL_CLASS, "logits_all" }
+                                label { class: "{PARAM_LABEL_CLASS} inline-block w-16", "logits_all" }
                                 button {
                                     class: PARAM_ICON_BUTTON_CLASS,
                                     onclick: move |_| logits_all_info_signal.set(true),
@@ -898,8 +829,8 @@ pub fn ConfigHardware() -> Element {
                         }
                     }
                 }
-                if supports_rope {
-                    div { class: "mt-4 flex flex-wrap gap-10 justify-start",
+                    if supports_rope {
+                        div { class: "mt-4 flex flex-wrap gap-10 justify-start",
                         div { class: PARAM_COLUMN_CLASS,
                             span { class: "text-gray-300 font-semibold", "RoPE" }
                             div { class: PARAM_BLOCK_CLASS,
@@ -967,6 +898,7 @@ pub fn ConfigHardware() -> Element {
                                 }
                             }
                         }
+                    }
                     }
                 }
             }
@@ -1044,227 +976,63 @@ pub fn ConfigHardware() -> Element {
             }
         }
 
+        // Help modals - using HelpTopic for centralized content management
         if show_backend_info() {
-            { info_modal(
-                "Inference backend",
-                show_backend_info,
-                vec![
-                    "Select the runtime that executes prompts (local llama.cpp, vLLM, OpenAI, etc.).",
-                    "Switching backend clears the model name so you can pick a compatible artifact."
-                ],
-            ) }
+            { info_modal(HelpTopic::Backend.title(), show_backend_info, HelpTopic::Backend.paragraphs()) }
         }
         if show_model_info() {
-            { info_modal(
-                "Model selection",
-                show_model_info,
-                vec![
-                    "When the backend exposes a discovery API the select menu lists its models.",
-                    "You can always type a model identifier manually, e.g., `llama3:8b`."
-                ],
-            ) }
+            { info_modal(HelpTopic::Model.title(), show_model_info, HelpTopic::Model.paragraphs()) }
         }
         if show_num_thread_info() {
-            { info_modal(
-                "num_thread",
-                show_num_thread_info,
-                vec![
-                    "Controls how many worker threads the local backend uses.",
-                    "Match physical cores for best throughput; higher values may hurt latency."
-                ],
-            ) }
+            { info_modal(HelpTopic::NumThread.title(), show_num_thread_info, HelpTopic::NumThread.paragraphs()) }
         }
         if show_num_gpu_info() {
-            { info_modal(
-                "num_gpu",
-                show_num_gpu_info,
-                vec![
-                    "Number of GPU devices to employ.",
-                    "Set to 0 to keep all inference on CPU even if GPUs are detected."
-                ],
-            ) }
+            { info_modal(HelpTopic::NumGpu.title(), show_num_gpu_info, HelpTopic::NumGpu.paragraphs()) }
         }
         if show_gpu_layers_info() {
-            { info_modal(
-                "gpu_layers",
-                show_gpu_layers_info,
-                vec![
-                    "How many transformer layers to offload to GPU memory.",
-                    "Increasing the value speeds up inference until you exhaust VRAM."
-                ],
-            ) }
+            { info_modal(HelpTopic::GpuLayers.title(), show_gpu_layers_info, HelpTopic::GpuLayers.paragraphs()) }
         }
         if show_main_gpu_info() {
-            { info_modal(
-                "main_gpu",
-                show_main_gpu_info,
-                vec![
-                    "Select which GPU index hosts the embeddings cache and KV store.",
-                    "Set 0 unless you want to pin workloads to a different adapter."
-                ],
-            ) }
+            { info_modal(HelpTopic::MainGpu.title(), show_main_gpu_info, HelpTopic::MainGpu.paragraphs()) }
         }
         if show_rope_base_info() {
-            { info_modal(
-                "RoPE base frequency",
-                show_rope_base_info,
-                vec![
-                    "Tweak to extend context windows on llama.cpp builds that support RoPE scaling.",
-                    "Keep at 10k for default 2K context; raise for long context tuned weights."
-                ],
-            ) }
+            { info_modal(HelpTopic::RopeBase.title(), show_rope_base_info, HelpTopic::RopeBase.paragraphs()) }
         }
         if show_rope_scale_info() {
-            { info_modal(
-                "RoPE scale",
-                show_rope_scale_info,
-                vec![
-                    "Scale factor applied to rotational embeddings during inference.",
-                    "Combine with rope base adjustments when running patched long-context models."
-                ],
-            ) }
+            { info_modal(HelpTopic::RopeScale.title(), show_rope_scale_info, HelpTopic::RopeScale.paragraphs()) }
         }
         if show_low_vram_info() {
-            { info_modal(
-                "low_vram",
-                show_low_vram_info,
-                vec![
-                    "Enables llama.cpp optimizations that reduce peak VRAM usage.",
-                    "Disabling may improve latency when ample VRAM is available."
-                ],
-            ) }
+            { info_modal(HelpTopic::LowVram.title(), show_low_vram_info, HelpTopic::LowVram.paragraphs()) }
         }
         if show_f16_kv_info() {
-            { info_modal(
-                "f16_kv",
-                show_f16_kv_info,
-                vec![
-                    "Store the KV cache in fp16 instead of fp32 to save memory.",
-                    "Turn off only when debugging precision-sensitive workloads."
-                ],
-            ) }
+            { info_modal(HelpTopic::F16Kv.title(), show_f16_kv_info, HelpTopic::F16Kv.paragraphs()) }
         }
         if show_num_batch_info() {
-            { info_modal(
-                "num_batch",
-                show_num_batch_info,
-                vec![
-                    "Controls how many tokens are processed per batch on decode steps.",
-                    "Higher values increase throughput but consume additional RAM/VRAM."
-                ],
-            ) }
+            { info_modal(HelpTopic::NumBatch.title(), show_num_batch_info, HelpTopic::NumBatch.paragraphs()) }
         }
         if show_num_ctx_info() {
-            { info_modal(
-                "num_ctx",
-                show_num_ctx_info,
-                vec![
-                    "Maximum context window size in tokens.",
-                    "Larger values allow longer conversations but require more memory."
-                ],
-            ) }
+            { info_modal(HelpTopic::NumCtx.title(), show_num_ctx_info, HelpTopic::NumCtx.paragraphs()) }
         }
         if show_numa_info() {
-            { info_modal(
-                "NUMA",
-                show_numa_info,
-                vec![
-                    "NUMA is a memory architecture design used in multi-processor systems where memory access time depends on the memory location relative to the processor.",
-                    "Each CPU has its own 'local' memory that it can access quickly. CPUs can also access other CPUs' 'remote' memory, but it's slower. This contrasts with UMA (Uniform Memory Access) where all memory has equal access time.",
-                    "As systems added more CPUs, a single memory bus became a bottleneck. NUMA lets each processor have a fast path to its own memory bank, improving overall throughput at the cost of non-uniform latency.",
-                    "Operating systems try to allocate memory local to the CPU running a process. Performance-sensitive applications like databases and VMs often need NUMA-aware configuration.",
-                    "On Linux you can check NUMA topology with `numactl --hardware` or `lscpu`. On Windows, open Task Manager, go to Performance, then CPU, right-click the graph and select 'Change graph to NUMA nodes'. You can also use PowerShell with `Get-CimInstance Win32_Processor | Select-Object SocketDesignation,NumberOfCores` or the Sysinternals tool Coreinfo with `coreinfo -n`.",
-                    "Most consumer desktop systems are UMA — NUMA mainly matters for multi-socket servers."
-                ],
-            ) }
+            { info_modal(HelpTopic::Numa.title(), show_numa_info, HelpTopic::Numa.paragraphs()) }
         }
         if show_mmap_info() {
-            { info_modal(
-                "use_mmap",
-                show_mmap_info,
-                vec![
-                    "Memory-map model files instead of loading them entirely into RAM.",
-                    "Reduces initial load time and memory usage for large models."
-                ],
-            ) }
+            { info_modal(HelpTopic::Mmap.title(), show_mmap_info, HelpTopic::Mmap.paragraphs()) }
         }
         if show_mlock_info() {
-            { info_modal(
-                "use_mlock",
-                show_mlock_info,
-                vec![
-                    "Lock model weights in RAM to prevent swapping to disk.",
-                    "Improves inference latency but requires sufficient available memory."
-                ],
-            ) }
+            { info_modal(HelpTopic::Mlock.title(), show_mlock_info, HelpTopic::Mlock.paragraphs()) }
         }
         if show_logits_all_info() {
-            { info_modal(
-                "logits_all",
-                show_logits_all_info,
-                vec![
-                    "When logits_all is enabled, the model returns the raw logit scores (unnormalized probabilities) for every token position in the input sequence, not just the final token.",
-                    "Normal mode (logits_all = off): The model only returns logits for the last token position. This is sufficient for standard text generation where you only need to predict what comes next.",
-                    "logits_all = on: The model returns a full matrix of logits — for each position in your input, you get scores for the entire vocabulary. If your input has 100 tokens and the vocabulary is 32,000 tokens, you get 100 × 32,000 = 3.2 million values.",
-                    "Consequences: Memory usage increases significantly — you're storing logits for every position instead of just one. Inference may be slightly slower due to the extra data being computed and transferred. Required for perplexity calculation — you need to know how probable each actual token was at each position. Useful for analysis tasks like understanding what the model 'thought' at each step, debugging, or research.",
-                    "To calculate memory usage for logits, each logit is typically a 32-bit float which is 4 bytes. The formula is sequence length times vocabulary size times 4 bytes.",
-                    "A 2048 token context with a 32k vocabulary works out to 2048 × 32000 × 4 = 262 MB. A 4096 token context with a 128k vocabulary like Llama 3 uses 4096 × 128000 × 4 = 2.1 GB.",
-                    "With logits_all off you only get logits for the last token, so just vocabulary size times 4 bytes, around 128-512 KB depending on vocabulary size. That's why it's off by default.",
-                    "When to enable it: Computing perplexity scores, analyzing model behavior at each token, certain research/debugging scenarios.",
-                    "When to leave it off: Normal chat/completion use cases, when you just want generated text, when memory is constrained.",
-                    "For typical inference and chat applications, keep it off to save memory and improve performance.",
-                    "Perplexity is a metric that measures how well a language model predicts a sequence of text. Lower perplexity means the model is less 'surprised' by the text and assigns higher probabilities to the actual tokens that appear.",
-                    "Mathematically it's the exponentiated average negative log-likelihood per token. If a model assigns high probability to each token in a sequence, the perplexity is low. If the model is often wrong about what comes next, perplexity is high.",
-                    "To calculate perplexity you need the probability distribution over the entire vocabulary at each position in the sequence, not just the final prediction. That's why logits_all must be enabled — it returns the raw scores for every token at every position, which you then convert to probabilities and use to compute how likely the actual text was under the model.",
-                    "Common uses include comparing model quality, evaluating fine-tuning results, and measuring how well a model fits a particular domain of text. A model fine-tuned on legal documents should have lower perplexity on legal text than a general-purpose model.",
-                    "If perplexity is high it means the model is struggling to predict the text well. A few approaches depending on the cause:",
-                    "If the text is out of domain, fine-tune the model on similar data. A general model will have high perplexity on specialized text like legal documents or code because it wasn't trained heavily on that style.",
-                    "If the model is too small, try a larger model. Bigger models generally have lower perplexity because they capture more patterns and nuances.",
-                    "If the tokenizer is mismatched, make sure you're using the correct tokenizer for the model. Wrong tokenization produces garbage inputs and high perplexity.",
-                    "If the text itself is unusual or noisy, that's expected. Random text, heavy jargon, typos, or multiple languages mixed together will naturally produce high perplexity.",
-                    "If you're evaluating your own fine-tuned model and perplexity increased after training, you may have overfit to training data, used a learning rate that was too high, or trained for too many epochs. Check perplexity on both training and validation sets to diagnose.",
-                    "Sometimes high perplexity is just information — it tells you the model doesn't fit that data well, which may be fine depending on your use case."
-                ],
-            ) }
+            { info_modal(HelpTopic::LogitsAll.title(), show_logits_all_info, HelpTopic::LogitsAll.paragraphs()) }
         }
         if show_vocab_only_info() {
-            { info_modal(
-                "vocab_only",
-                show_vocab_only_info,
-                vec![
-                    "Load only the vocabulary without model weights.",
-                    "Useful for tokenization tasks without running inference."
-                ],
-            ) }
+            { info_modal(HelpTopic::VocabOnly.title(), show_vocab_only_info, HelpTopic::VocabOnly.paragraphs()) }
         }
         if show_reload_info() {
-            { info_modal(
-                "Reload Models",
-                show_reload_info,
-                vec![
-                    "The Reload button refreshes the list of available models from the backend.",
-                    "After starting a new model server: If you just launched Ollama, vLLM, or another backend, the model list may not have been available when the page first loaded.",
-                    "After pulling/downloading new models: If you ran `ollama pull llama3` or downloaded a new model, click Reload to see it in the dropdown.",
-                    "After deleting models: To update the list after removing models from the backend.",
-                    "If the initial fetch failed: Network issues or backend not ready can cause the first load to fail; Reload lets you retry.",
-                    "To check for newly available models: Some backends may have models added dynamically."
-                ],
-            ) }
+            { info_modal(HelpTopic::Reload.title(), show_reload_info, HelpTopic::Reload.paragraphs()) }
         }
         if show_rope_tuning_info() {
-            { info_modal(
-                "RoPE Tuning",
-                show_rope_tuning_info,
-                vec![
-                    "RoPE (Rotary Position Embedding) tuning refers to adjusting the positional encoding parameters to extend a model's context length beyond what it was originally trained on.",
-                    "RoPE encodes position information by rotating the query and key vectors in the attention mechanism. The rotation angle depends on the position and a base frequency parameter, typically 10000 by default.",
-                    "To extend context length you can adjust the base frequency. Increasing it (like to 500000 in Llama 3) compresses the position signal, letting the model handle longer sequences. This is sometimes called 'base frequency scaling' or adjusting rope_freq_base.",
-                    "Another approach is linear scaling where you multiply position indices by a factor. If a model was trained on 4k context and you want 16k, you scale positions by 0.25 so the model sees familiar position values. The rope_freq_scale parameter controls this.",
-                    "YaRN (Yet another RoPE extensioN) combines frequency scaling with attention temperature adjustments for better quality at extended lengths.",
-                    "The tradeoff is that extending context too aggressively degrades quality. The model wasn't trained to attend over those distances so it may lose coherence or miss relevant context. Fine-tuning on longer sequences after adjusting RoPE parameters helps but isn't always necessary for moderate extensions.",
-                    "In llama.cpp you can set rope_freq_base and rope_freq_scale directly when loading a model."
-                ],
-            ) }
+            { info_modal(HelpTopic::RopeTuning.title(), show_rope_tuning_info, HelpTopic::RopeTuning.paragraphs()) }
         }
     }
 }

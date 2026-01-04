@@ -220,6 +220,6 @@ MENU_MIN_LINES=${MENU_MIN_LINES:-7}
 } >> "$LOG_FILE" 2>&1
 
 # Attach to session if not already inside tmux (outside logging block)
-if [ -z "${TMUX:-}" ]; then
+if [ -z "${TMUX:-}" ] && [ -t 0 ]; then
     exec tmux attach -t ba
 fi

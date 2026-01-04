@@ -1,2 +1,8 @@
-# Local Dioxus CLI settings (optional)
-# This file exists so dx serve stops warning about missing config.
+[application]
+name = "fro"
+default_platform = "web"
+
+[web.app]
+ip = "127.0.0.1"
+port = 1789
+open = true

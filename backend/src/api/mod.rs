@@ -239,6 +239,143 @@ struct LlmConfigRequest {
     presence_penalty: f32,
     stop_sequences: Vec<String>,
     seed: Option<i64>,
+    #[serde(default = "default_min_p")]
+    min_p: f32,
+    #[serde(default = "default_typical_p")]
+    typical_p: f32,
+    #[serde(default = "default_tfs_z")]
+    tfs_z: f32,
+    #[serde(default = "default_mirostat")]
+    mirostat: i32,
+    #[serde(default = "default_mirostat_eta")]
+    mirostat_eta: f32,
+    #[serde(default = "default_mirostat_tau")]
+    mirostat_tau: f32,
+    #[serde(default = "default_repeat_last_n")]
+    repeat_last_n: usize,
+}
+
+fn default_min_p() -> f32 {
+    llm_settings::DEFAULT_MIN_P
+}
+fn default_typical_p() -> f32 {
+    llm_settings::DEFAULT_TYPICAL_P
+}
+fn default_tfs_z() -> f32 {
+    llm_settings::DEFAULT_TFS_Z
+}
+fn default_mirostat() -> i32 {
+    llm_settings::DEFAULT_MIROSTAT
+}
+fn default_mirostat_eta() -> f32 {
+    llm_settings::DEFAULT_MIROSTAT_ETA
+}
+fn default_mirostat_tau() -> f32 {
+    llm_settings::DEFAULT_MIROSTAT_TAU
+}
+fn default_repeat_last_n() -> usize {
+    llm_settings::DEFAULT_REPEAT_LAST_N
+}
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[serde(default)]
+struct HardwareConfigRequest {
+    backend_type: String,
+    model: String,
+    num_thread: usize,
+    num_gpu: usize,
+    gpu_layers: usize,
+    main_gpu: usize,
+    low_vram: bool,
+    f16_kv: bool,
+    rope_frequency_base: f32,
+    rope_frequency_scale: f32,
+    numa: bool,
+    num_ctx: usize,
+    num_batch: usize,
+    logits_all: bool,
+    vocab_only: bool,
+    use_mmap: bool,
+    use_mlock: bool,
+}
+
+impl Default for HardwareConfigRequest {
+    fn default() -> Self {
+        crate::db::param_hardware::HardwareParams::default().into()
+    }
+}
+
+impl From<crate::db::param_hardware::HardwareParams> for HardwareConfigRequest {
+    fn from(params: crate::db::param_hardware::HardwareParams) -> Self {
+        Self {
+            backend_type: backend_type_to_string(&params.backend_type),
+            model: params.model,
+            num_thread: params.num_thread,
+            num_gpu: params.num_gpu,
+            gpu_layers: params.gpu_layers,
+            main_gpu: params.main_gpu,
+            low_vram: params.low_vram,
+            f16_kv: params.f16_kv,
+            rope_frequency_base: params.rope_frequency_base,
+            rope_frequency_scale: params.rope_frequency_scale,
+            numa: params.numa,
+            num_ctx: params.num_ctx,
+            num_batch: params.num_batch,
+            logits_all: params.logits_all,
+            vocab_only: params.vocab_only,
+            use_mmap: params.use_mmap,
+            use_mlock: params.use_mlock,
+        }
+    }
+}
+
+impl From<HardwareConfigRequest> for crate::db::param_hardware::HardwareParams {
+    fn from(req: HardwareConfigRequest) -> Self {
+        Self {
+            backend_type: string_to_backend_type(&req.backend_type),
+            model: req.model,
+            num_thread: req.num_thread,
+            num_gpu: req.num_gpu,
+            gpu_layers: req.gpu_layers,
+            main_gpu: req.main_gpu,
+            low_vram: req.low_vram,
+            f16_kv: req.f16_kv,
+            rope_frequency_base: req.rope_frequency_base,
+            rope_frequency_scale: req.rope_frequency_scale,
+            numa: req.numa,
+            num_ctx: req.num_ctx,
+            num_batch: req.num_batch,
+            logits_all: req.logits_all,
+            vocab_only: req.vocab_only,
+            use_mmap: req.use_mmap,
+            use_mlock: req.use_mlock,
+        }
+    }
+}
+
+fn backend_type_to_string(bt: &crate::db::param_hardware::BackendType) -> String {
+    use crate::db::param_hardware::BackendType;
+    match bt {
+        BackendType::Ollama => "ollama".to_string(),
+        BackendType::LlamaCpp => "llama_cpp".to_string(),
+        BackendType::OpenAi => "openai".to_string(),
+        BackendType::Anthropic => "anthropic".to_string(),
+        BackendType::Vllm => "vllm".to_string(),
+        BackendType::Custom => "custom".to_string(),
+    }
+}
+
+fn string_to_backend_type(s: &str) -> crate::db::param_hardware::BackendType {
+    use crate::db::param_hardware::BackendType;
+    match s {
+        "ollama" => BackendType::Ollama,
+        "llama_cpp" => BackendType::LlamaCpp,
+        "openai" => BackendType::OpenAi,
+        "anthropic" => BackendType::Anthropic,
+        "vllm" => BackendType::Vllm,
+        "custom" => BackendType::Custom,
+        _ => BackendType::Ollama, // default fallback
+    }
 }
 
 #[derive(Debug, Serialize)]
@@ -247,6 +384,14 @@ struct LlmConfigResponse {
     message: String,
     request_id: String,
     config: LlmConfig,
+}
+
+#[derive(Debug, Serialize)]
+struct HardwareConfigResponse {
+    status: String,
+    message: String,
+    request_id: String,
+    config: HardwareConfigRequest,
 }
 
 #[derive(Serialize)]
@@ -318,6 +463,52 @@ fn validate_llm_request(req: &LlmConfigRequest) -> Result<(), String> {
     }
     if !(0.0..=2.0).contains(&req.presence_penalty) {
         return Err("presence_penalty must be between 0 and 2".into());
+    }
+    if !(0.0..=1.0).contains(&req.min_p) {
+        return Err("min_p must be between 0 and 1".into());
+    }
+    if !(0.0..=1.0).contains(&req.typical_p) {
+        return Err("typical_p must be between 0 and 1".into());
+    }
+    if !(0.0..=1.0).contains(&req.tfs_z) {
+        return Err("tfs_z must be between 0 and 1".into());
+    }
+    if !(0..=2).contains(&req.mirostat) {
+        return Err("mirostat must be 0, 1, or 2".into());
+    }
+    if !(0.0..=1.0).contains(&req.mirostat_eta) {
+        return Err("mirostat_eta must be between 0 and 1".into());
+    }
+    if !(0.0..=10.0).contains(&req.mirostat_tau) {
+        return Err("mirostat_tau must be between 0 and 10".into());
+    }
+    if req.repeat_last_n == 0 {
+        return Err("repeat_last_n must be greater than 0".into());
+    }
+    Ok(())
+}
+
+fn validate_hardware_request(req: &HardwareConfigRequest) -> Result<(), String> {
+    if req.num_thread == 0 {
+        return Err("num_thread must be greater than 0".into());
+    }
+    if req.num_gpu > 64 {
+        return Err("num_gpu must be 64 or less".into());
+    }
+    if req.main_gpu > 64 {
+        return Err("main_gpu index must be 64 or less".into());
+    }
+    if req.rope_frequency_base <= 0.0 {
+        return Err("rope_frequency_base must be positive".into());
+    }
+    if req.rope_frequency_scale <= 0.0 {
+        return Err("rope_frequency_scale must be positive".into());
+    }
+    if req.num_ctx == 0 {
+        return Err("num_ctx must be greater than 0".into());
+    }
+    if req.num_batch == 0 {
+        return Err("num_batch must be greater than 0".into());
     }
     Ok(())
 }
@@ -586,6 +777,13 @@ async fn commit_llm_config(payload: web::Json<LlmConfigRequest>) -> Result<HttpR
         presence_penalty: body.presence_penalty,
         stop_sequences: body.stop_sequences,
         seed: body.seed,
+        min_p: body.min_p,
+        typical_p: body.typical_p,
+        tfs_z: body.tfs_z,
+        mirostat: body.mirostat,
+        mirostat_eta: body.mirostat_eta,
+        mirostat_tau: body.mirostat_tau,
+        repeat_last_n: body.repeat_last_n,
     };
 
     match llm_settings::save_llm_config_default_db(&new_cfg) {
@@ -622,6 +820,237 @@ async fn commit_llm_config(payload: web::Json<LlmConfigRequest>) -> Result<HttpR
                 "request_id": request_id
             })))
         }
+    }
+}
+
+async fn get_hardware_config() -> Result<HttpResponse, Error> {
+    let request_id = generate_request_id();
+    let config = crate::db::param_hardware::global_config().into();
+    Ok(HttpResponse::Ok().json(HardwareConfigResponse {
+        status: "ok".into(),
+        message: "".into(),
+        request_id,
+        config,
+    }))
+}
+
+async fn commit_hardware_config(
+    payload: web::Json<HardwareConfigRequest>,
+) -> Result<HttpResponse, Error> {
+    let request_id = generate_request_id();
+    let body = payload.into_inner();
+
+    if let Err(msg) = validate_hardware_request(&body) {
+        return Ok(HttpResponse::BadRequest().json(json!({
+            "status": "invalid",
+            "message": msg,
+            "request_id": request_id
+        })));
+    }
+
+    let params = crate::db::param_hardware::HardwareParams::from(body.clone());
+    match crate::db::param_hardware::save_default_db(&params) {
+        Ok(_) => {
+            tracing::info!(
+                request_id = %request_id,
+                num_thread = params.num_thread,
+                num_gpu = params.num_gpu,
+                gpu_layers = params.gpu_layers,
+                main_gpu = params.main_gpu,
+                low_vram = params.low_vram,
+                f16_kv = params.f16_kv,
+                rope_frequency_base = params.rope_frequency_base,
+                rope_frequency_scale = params.rope_frequency_scale,
+                "Hardware config committed"
+            );
+            Ok(HttpResponse::Ok().json(HardwareConfigResponse {
+                status: "ok".into(),
+                message: "Hardware settings saved".into(),
+                request_id,
+                config: body,
+            }))
+        }
+        Err(err) => {
+            tracing::error!(
+                request_id = %request_id,
+                error = %err,
+                "Failed to save hardware config"
+            );
+            Ok(HttpResponse::InternalServerError().json(json!({
+                "status": "error",
+                "message": format!("Failed to save hardware config: {}", err),
+                "request_id": request_id
+            })))
+        }
+    }
+}
+
+// ============================================================================
+// API KEYS CONFIG
+// ============================================================================
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+struct ApiKeysRequest {
+    #[serde(default)]
+    openai_api_key: String,
+    #[serde(default)]
+    anthropic_api_key: String,
+}
+
+#[derive(Debug, Serialize)]
+struct ApiKeysResponse {
+    status: String,
+    message: String,
+    request_id: String,
+    has_openai_key: bool,
+    has_anthropic_key: bool,
+    openai_key_masked: String,
+    anthropic_key_masked: String,
+    openai_from_env: bool,
+    anthropic_from_env: bool,
+}
+
+async fn get_api_keys() -> Result<HttpResponse, Error> {
+    let request_id = generate_request_id();
+    let keys = crate::db::api_keys::global_config();
+
+    let openai_from_env = std::env::var("OPENAI_API_KEY").is_ok();
+    let anthropic_from_env = std::env::var("ANTHROPIC_API_KEY").is_ok();
+
+    let openai_key_masked = if openai_from_env {
+        "[from environment]".to_string()
+    } else if !keys.openai_api_key.is_empty() {
+        crate::db::api_keys::ApiKeys::mask_key(&keys.openai_api_key)
+    } else {
+        String::new()
+    };
+
+    let anthropic_key_masked = if anthropic_from_env {
+        "[from environment]".to_string()
+    } else if !keys.anthropic_api_key.is_empty() {
+        crate::db::api_keys::ApiKeys::mask_key(&keys.anthropic_api_key)
+    } else {
+        String::new()
+    };
+
+    Ok(HttpResponse::Ok().json(ApiKeysResponse {
+        status: "ok".into(),
+        message: "API keys status".into(),
+        request_id,
+        has_openai_key: keys.has_openai_key(),
+        has_anthropic_key: keys.has_anthropic_key(),
+        openai_key_masked,
+        anthropic_key_masked,
+        openai_from_env,
+        anthropic_from_env,
+    }))
+}
+
+async fn save_api_keys(payload: web::Json<ApiKeysRequest>) -> Result<HttpResponse, Error> {
+    let request_id = generate_request_id();
+    let body = payload.into_inner();
+
+    // Get current keys and update only non-empty values
+    let mut keys = crate::db::api_keys::global_config();
+
+    if !body.openai_api_key.is_empty() {
+        keys.openai_api_key = body.openai_api_key;
+    }
+    if !body.anthropic_api_key.is_empty() {
+        keys.anthropic_api_key = body.anthropic_api_key;
+    }
+
+    match crate::db::api_keys::update_config(keys.clone()) {
+        Ok(_) => {
+            tracing::info!(
+                request_id = %request_id,
+                has_openai = keys.has_openai_key(),
+                has_anthropic = keys.has_anthropic_key(),
+                "API keys saved"
+            );
+
+            let openai_from_env = std::env::var("OPENAI_API_KEY").is_ok();
+            let anthropic_from_env = std::env::var("ANTHROPIC_API_KEY").is_ok();
+
+            Ok(HttpResponse::Ok().json(ApiKeysResponse {
+                status: "ok".into(),
+                message: "API keys saved".into(),
+                request_id,
+                has_openai_key: keys.has_openai_key(),
+                has_anthropic_key: keys.has_anthropic_key(),
+                openai_key_masked: if openai_from_env {
+                    "[from environment]".to_string()
+                } else if !keys.openai_api_key.is_empty() {
+                    crate::db::api_keys::ApiKeys::mask_key(&keys.openai_api_key)
+                } else {
+                    String::new()
+                },
+                anthropic_key_masked: if anthropic_from_env {
+                    "[from environment]".to_string()
+                } else if !keys.anthropic_api_key.is_empty() {
+                    crate::db::api_keys::ApiKeys::mask_key(&keys.anthropic_api_key)
+                } else {
+                    String::new()
+                },
+                openai_from_env,
+                anthropic_from_env,
+            }))
+        }
+        Err(err) => {
+            tracing::error!(
+                request_id = %request_id,
+                error = %err,
+                "Failed to save API keys"
+            );
+            Ok(HttpResponse::InternalServerError().json(json!({
+                "status": "error",
+                "message": format!("Failed to save API keys: {}", err),
+                "request_id": request_id
+            })))
+        }
+    }
+}
+
+async fn delete_api_key(path: web::Path<String>) -> Result<HttpResponse, Error> {
+    let request_id = generate_request_id();
+    let provider = path.into_inner();
+
+    let mut keys = crate::db::api_keys::global_config();
+
+    match provider.as_str() {
+        "openai" => {
+            keys.openai_api_key = String::new();
+        }
+        "anthropic" => {
+            keys.anthropic_api_key = String::new();
+        }
+        _ => {
+            return Ok(HttpResponse::BadRequest().json(json!({
+                "status": "error",
+                "message": format!("Unknown provider: {}. Use 'openai' or 'anthropic'", provider),
+                "request_id": request_id
+            })));
+        }
+    }
+
+    match crate::db::api_keys::update_config(keys) {
+        Ok(_) => {
+            tracing::info!(
+                request_id = %request_id,
+                provider = %provider,
+                "API key deleted"
+            );
+            Ok(HttpResponse::Ok().json(json!({
+                "status": "ok",
+                "message": format!("{} API key deleted", provider),
+                "request_id": request_id
+            })))
+        }
+        Err(err) => Ok(HttpResponse::InternalServerError().json(json!({
+            "status": "error",
+            "message": format!("Failed to delete API key: {}", err),
+            "request_id": request_id
+        }))),
     }
 }
 
@@ -1482,6 +1911,8 @@ fn parse_log_line(line: &str) -> LogEntry {
     }
 }
 
+pub mod sys_routes;
+
 pub fn start_api_server(
     config: &ApiConfig,
 ) -> impl std::future::Future<Output = std::io::Result<()>> {
@@ -1605,6 +2036,14 @@ pub fn start_api_server(
             .route("/config/chunk_size", web::post().to(commit_chunk_config))
             .route("/config/llm", web::get().to(get_llm_config))
             .route("/config/llm", web::post().to(commit_llm_config))
+            .route("/config/hardware", web::get().to(get_hardware_config))
+            .route("/config/hardware", web::post().to(commit_hardware_config))
+            .route("/config/api_keys", web::get().to(get_api_keys))
+            .route("/config/api_keys", web::post().to(save_api_keys))
+            .route(
+                "/config/api_keys/{provider}",
+                web::delete().to(delete_api_key),
+            )
             .route("/reindex", web::post().to(reindex_handler))
             .route("/reindex/async", web::post().to(reindex_async_handler))
             .route(
@@ -1637,6 +2076,7 @@ pub fn start_api_server(
             // ============================================================================
             .route("/agent", web::post().to(run_agent))
             .route("/agent/chat", web::get().to(run_agent_get))
+            .service(web::scope("/sys").configure(sys_routes::sys_routes))
     });
     if force_single_worker {
         http_server = http_server.workers(1);

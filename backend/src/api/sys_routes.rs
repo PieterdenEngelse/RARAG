@@ -1,0 +1,301 @@
+use actix_web::{web, HttpResponse, Responder};
+use num_cpus;
+use serde::{Deserialize, Serialize};
+use wgpu::Instance;
+
+#[derive(Serialize)]
+struct GpuInfo {
+    index: usize,
+    name: String,
+    vendor: String,
+    backend: String,
+    device_type: String,
+}
+
+#[derive(Serialize)]
+struct SystemInfo {
+    os: String,
+    os_family: String,
+    arch: String,
+    physical_cores: usize,
+    logical_cores: usize,
+}
+
+// Vendor IDs from PCI database
+fn get_vendor_name(vendor_id: u32) -> String {
+    match vendor_id {
+        0x1002 => "AMD".to_string(),
+        0x10DE => "NVIDIA".to_string(),
+        0x8086 => "Intel".to_string(),
+        0x13B5 => "ARM".to_string(),
+        0x5143 => "Qualcomm".to_string(),
+        0x1414 => "Microsoft".to_string(),
+        0x106B => "Apple".to_string(),
+        0x14E4 => "Broadcom".to_string(),
+        0x1AE0 => "Google".to_string(),
+        0x144D => "Samsung".to_string(),
+        _ => format!("Unknown (0x{:04X})", vendor_id),
+    }
+}
+
+fn get_device_type_name(device_type: wgpu::DeviceType) -> String {
+    match device_type {
+        wgpu::DeviceType::IntegratedGpu => "Integrated GPU".to_string(),
+        wgpu::DeviceType::DiscreteGpu => "Discrete GPU".to_string(),
+        wgpu::DeviceType::VirtualGpu => "Virtual GPU".to_string(),
+        wgpu::DeviceType::Cpu => "CPU (Software)".to_string(),
+        wgpu::DeviceType::Other => "Other".to_string(),
+    }
+}
+
+fn get_backend_name(backend: wgpu::Backend) -> String {
+    match backend {
+        wgpu::Backend::Vulkan => "Vulkan".to_string(),
+        wgpu::Backend::Metal => "Metal".to_string(),
+        wgpu::Backend::Dx12 => "DirectX 12".to_string(),
+        wgpu::Backend::Gl => "OpenGL".to_string(),
+        wgpu::Backend::BrowserWebGpu => "WebGPU".to_string(),
+        wgpu::Backend::Empty => "Empty".to_string(),
+    }
+}
+
+async fn get_physical_cores() -> impl Responder {
+    HttpResponse::Ok().json(num_cpus::get_physical())
+}
+
+async fn get_gpus() -> impl Responder {
+    let instance = Instance::new(wgpu::InstanceDescriptor::default());
+    let adapters: Vec<GpuInfo> = instance
+        .enumerate_adapters(wgpu::Backends::all())
+        .into_iter()
+        .enumerate()
+        .map(|(index, adapter)| {
+            let info = adapter.get_info();
+            GpuInfo {
+                index,
+                name: info.name,
+                vendor: get_vendor_name(info.vendor),
+                backend: get_backend_name(info.backend),
+                device_type: get_device_type_name(info.device_type),
+            }
+        })
+        .collect();
+    HttpResponse::Ok().json(adapters)
+}
+
+/// Returns simple GPU names list (for backward compatibility)
+async fn get_gpu_names() -> impl Responder {
+    let instance = Instance::new(wgpu::InstanceDescriptor::default());
+    let names: Vec<String> = instance
+        .enumerate_adapters(wgpu::Backends::all())
+        .into_iter()
+        .map(|adapter| adapter.get_info().name)
+        .collect();
+    HttpResponse::Ok().json(names)
+}
+
+/// Model info returned by the models endpoint
+#[derive(Serialize, Clone)]
+struct ModelInfo {
+    name: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    size: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    modified_at: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    family: Option<String>,
+}
+
+/// Response from Ollama /api/tags endpoint
+#[derive(Deserialize)]
+struct OllamaTagsResponse {
+    models: Vec<OllamaModel>,
+}
+
+#[derive(Deserialize)]
+struct OllamaModel {
+    name: String,
+    #[serde(default)]
+    size: Option<u64>,
+    #[serde(default)]
+    modified_at: Option<String>,
+    #[serde(default)]
+    details: Option<OllamaModelDetails>,
+}
+
+#[derive(Deserialize)]
+struct OllamaModelDetails {
+    #[serde(default)]
+    family: Option<String>,
+}
+
+/// Query params for models endpoint
+#[derive(Deserialize)]
+struct ModelsQuery {
+    backend: Option<String>,
+}
+
+/// Fetch available models based on backend type
+async fn get_models(query: web::Query<ModelsQuery>) -> impl Responder {
+    let backend = query.backend.as_deref().unwrap_or("ollama");
+
+    match backend {
+        "ollama" => {
+            // Try to fetch from Ollama API
+            let ollama_url = std::env::var("OLLAMA_HOST")
+                .unwrap_or_else(|_| "http://127.0.0.1:11434".to_string());
+            let url = format!("{}/api/tags", ollama_url);
+
+            match reqwest::get(&url).await {
+                Ok(response) => match response.json::<OllamaTagsResponse>().await {
+                    Ok(tags) => {
+                        let models: Vec<ModelInfo> = tags
+                            .models
+                            .into_iter()
+                            .map(|m| ModelInfo {
+                                name: m.name,
+                                size: m.size,
+                                modified_at: m.modified_at,
+                                family: m.details.and_then(|d| d.family),
+                            })
+                            .collect();
+                        HttpResponse::Ok().json(models)
+                    }
+                    Err(e) => {
+                        tracing::warn!("Failed to parse Ollama response: {}", e);
+                        HttpResponse::Ok().json(Vec::<ModelInfo>::new())
+                    }
+                },
+                Err(e) => {
+                    tracing::warn!("Failed to connect to Ollama: {}", e);
+                    HttpResponse::Ok().json(Vec::<ModelInfo>::new())
+                }
+            }
+        }
+        "openai" => {
+            // Return common OpenAI models as static list
+            let models = vec![
+                ModelInfo {
+                    name: "gpt-4o".to_string(),
+                    size: None,
+                    modified_at: None,
+                    family: Some("GPT-4".to_string()),
+                },
+                ModelInfo {
+                    name: "gpt-4o-mini".to_string(),
+                    size: None,
+                    modified_at: None,
+                    family: Some("GPT-4".to_string()),
+                },
+                ModelInfo {
+                    name: "gpt-4-turbo".to_string(),
+                    size: None,
+                    modified_at: None,
+                    family: Some("GPT-4".to_string()),
+                },
+                ModelInfo {
+                    name: "gpt-4".to_string(),
+                    size: None,
+                    modified_at: None,
+                    family: Some("GPT-4".to_string()),
+                },
+                ModelInfo {
+                    name: "gpt-3.5-turbo".to_string(),
+                    size: None,
+                    modified_at: None,
+                    family: Some("GPT-3.5".to_string()),
+                },
+            ];
+            HttpResponse::Ok().json(models)
+        }
+        "anthropic" => {
+            // Return common Anthropic models as static list
+            let models = vec![
+                ModelInfo {
+                    name: "claude-3-5-sonnet-latest".to_string(),
+                    size: None,
+                    modified_at: None,
+                    family: Some("Claude 3.5".to_string()),
+                },
+                ModelInfo {
+                    name: "claude-3-5-haiku-latest".to_string(),
+                    size: None,
+                    modified_at: None,
+                    family: Some("Claude 3.5".to_string()),
+                },
+                ModelInfo {
+                    name: "claude-3-opus-latest".to_string(),
+                    size: None,
+                    modified_at: None,
+                    family: Some("Claude 3".to_string()),
+                },
+                ModelInfo {
+                    name: "claude-3-sonnet-20240229".to_string(),
+                    size: None,
+                    modified_at: None,
+                    family: Some("Claude 3".to_string()),
+                },
+                ModelInfo {
+                    name: "claude-3-haiku-20240307".to_string(),
+                    size: None,
+                    modified_at: None,
+                    family: Some("Claude 3".to_string()),
+                },
+            ];
+            HttpResponse::Ok().json(models)
+        }
+        "llama_cpp" | "vllm" | "custom" => {
+            // For local backends, return empty list - user enters model path manually
+            HttpResponse::Ok().json(Vec::<ModelInfo>::new())
+        }
+        _ => HttpResponse::Ok().json(Vec::<ModelInfo>::new()),
+    }
+}
+
+async fn get_system_info() -> impl Responder {
+    let os = if cfg!(target_os = "windows") {
+        "Windows"
+    } else if cfg!(target_os = "linux") {
+        "Linux"
+    } else if cfg!(target_os = "macos") {
+        "macOS"
+    } else {
+        "Unknown"
+    };
+
+    let os_family = if cfg!(target_family = "windows") {
+        "windows"
+    } else if cfg!(target_family = "unix") {
+        "unix"
+    } else {
+        "unknown"
+    };
+
+    let arch = if cfg!(target_arch = "x86_64") {
+        "x86_64"
+    } else if cfg!(target_arch = "aarch64") {
+        "aarch64"
+    } else if cfg!(target_arch = "x86") {
+        "x86"
+    } else {
+        "unknown"
+    };
+
+    let info = SystemInfo {
+        os: os.to_string(),
+        os_family: os_family.to_string(),
+        arch: arch.to_string(),
+        physical_cores: num_cpus::get_physical(),
+        logical_cores: num_cpus::get(),
+    };
+
+    HttpResponse::Ok().json(info)
+}
+
+pub fn sys_routes(cfg: &mut web::ServiceConfig) {
+    cfg.service(web::resource("/cores").route(web::get().to(get_physical_cores)));
+    cfg.service(web::resource("/gpus").route(web::get().to(get_gpus)));
+    cfg.service(web::resource("/gpu-names").route(web::get().to(get_gpu_names)));
+    cfg.service(web::resource("/info").route(web::get().to(get_system_info)));
+    cfg.service(web::resource("/models").route(web::get().to(get_models)));
+}

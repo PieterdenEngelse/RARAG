@@ -1,0 +1,164 @@
+/// Enumeration of all help topics available in the hardware configuration page.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum HelpTopic {
+    Backend,
+    Model,
+    NumThread,
+    NumGpu,
+    GpuLayers,
+    MainGpu,
+    RopeBase,
+    RopeScale,
+    LowVram,
+    F16Kv,
+    NumBatch,
+    NumCtx,
+    Numa,
+    Mmap,
+    Mlock,
+    LogitsAll,
+    VocabOnly,
+    Reload,
+    RopeTuning,
+}
+
+impl HelpTopic {
+    /// Returns the title for this help topic.
+    pub fn title(&self) -> &'static str {
+        match self {
+            Self::Backend => "Inference backend",
+            Self::Model => "Model selection",
+            Self::NumThread => "num_thread",
+            Self::NumGpu => "num_gpu",
+            Self::GpuLayers => "gpu_layers",
+            Self::MainGpu => "main_gpu",
+            Self::RopeBase => "RoPE base frequency",
+            Self::RopeScale => "RoPE scale",
+            Self::LowVram => "low_vram",
+            Self::F16Kv => "f16_kv",
+            Self::NumBatch => "num_batch",
+            Self::NumCtx => "num_ctx",
+            Self::Numa => "NUMA",
+            Self::Mmap => "use_mmap",
+            Self::Mlock => "use_mlock",
+            Self::LogitsAll => "logits_all",
+            Self::VocabOnly => "vocab_only",
+            Self::Reload => "Reload Models",
+            Self::RopeTuning => "RoPE Tuning",
+        }
+    }
+
+    /// Returns the help paragraphs for this topic.
+    pub fn paragraphs(&self) -> Vec<&'static str> {
+        match self {
+            Self::Backend => vec![
+                "Select the runtime that executes prompts (local llama.cpp, vLLM, OpenAI, etc.).",
+                "Switching backend clears the model name so you can pick a compatible artifact.",
+            ],
+            Self::Model => vec![
+                "When the backend exposes a discovery API the select menu lists its models.",
+                "You can always type a model identifier manually, e.g., `llama3:8b`.",
+            ],
+            Self::NumThread => vec![
+                "Controls how many worker threads the local backend uses.",
+                "Match physical cores for best throughput; higher values may hurt latency.",
+            ],
+            Self::NumGpu => vec![
+                "Number of GPU devices to employ.",
+                "Set to 0 to keep all inference on CPU even if GPUs are detected.",
+            ],
+            Self::GpuLayers => vec![
+                "How many transformer layers to offload to GPU memory.",
+                "Increasing the value speeds up inference until you exhaust VRAM.",
+            ],
+            Self::MainGpu => vec![
+                "Select which GPU index hosts the embeddings cache and KV store.",
+                "Set 0 unless you want to pin workloads to a different adapter.",
+            ],
+            Self::RopeBase => vec![
+                "Tweak to extend context windows on llama.cpp builds that support RoPE scaling.",
+                "Keep at 10k for default 2K context; raise for long context tuned weights.",
+            ],
+            Self::RopeScale => vec![
+                "Scale factor applied to rotational embeddings during inference.",
+                "Combine with rope base adjustments when running patched long-context models.",
+            ],
+            Self::LowVram => vec![
+                "Enables llama.cpp optimizations that reduce peak VRAM usage.",
+                "Disabling may improve latency when ample VRAM is available.",
+            ],
+            Self::F16Kv => vec![
+                "Store the KV cache in fp16 instead of fp32 to save memory.",
+                "Turn off only when debugging precision-sensitive workloads.",
+            ],
+            Self::NumBatch => vec![
+                "Controls how many tokens are processed per batch on decode steps.",
+                "Higher values increase throughput but consume additional RAM/VRAM.",
+            ],
+            Self::NumCtx => vec![
+                "Maximum context window size in tokens.",
+                "Larger values allow longer conversations but require more memory.",
+            ],
+            Self::Numa => vec![
+                "NUMA is a memory architecture design used in multi-processor systems where memory access time depends on the memory location relative to the processor.",
+                "Each CPU has its own 'local' memory that it can access quickly. CPUs can also access other CPUs' 'remote' memory, but it's slower. This contrasts with UMA (Uniform Memory Access) where all memory has equal access time.",
+                "As systems added more CPUs, a single memory bus became a bottleneck. NUMA lets each processor have a fast path to its own memory bank, improving overall throughput at the cost of non-uniform latency.",
+                "Operating systems try to allocate memory local to the CPU running a process. Performance-sensitive applications like databases and VMs often need NUMA-aware configuration.",
+                "On Linux you can check NUMA topology with `numactl --hardware` or `lscpu`. On Windows, open Task Manager, go to Performance, then CPU, right-click the graph and select 'Change graph to NUMA nodes'. You can also use PowerShell with `Get-CimInstance Win32_Processor | Select-Object SocketDesignation,NumberOfCores` or the Sysinternals tool Coreinfo with `coreinfo -n`.",
+                "Most consumer desktop systems are UMA — NUMA mainly matters for multi-socket servers.",
+            ],
+            Self::Mmap => vec![
+                "Memory-map model files instead of loading them entirely into RAM.",
+                "Reduces initial load time and memory usage for large models.",
+            ],
+            Self::Mlock => vec![
+                "Lock model weights in RAM to prevent swapping to disk.",
+                "Improves inference latency but requires sufficient available memory.",
+            ],
+            Self::LogitsAll => vec![
+                "When logits_all is enabled, the model returns the raw logit scores (unnormalized probabilities) for every token position in the input sequence, not just the final token.",
+                "Normal mode (logits_all = off): The model only returns logits for the last token position. This is sufficient for standard text generation where you only need to predict what comes next.",
+                "logits_all = on: The model returns a full matrix of logits — for each position in your input, you get scores for the entire vocabulary. If your input has 100 tokens and the vocabulary is 32,000 tokens, you get 100 × 32,000 = 3.2 million values.",
+                "Consequences: Memory usage increases significantly — you're storing logits for every position instead of just one. Inference may be slightly slower due to the extra data being computed and transferred. Required for perplexity calculation — you need to know how probable each actual token was at each position. Useful for analysis tasks like understanding what the model 'thought' at each step, debugging, or research.",
+                "To calculate memory usage for logits, each logit is typically a 32-bit float which is 4 bytes. The formula is sequence length times vocabulary size times 4 bytes.",
+                "A 2048 token context with a 32k vocabulary works out to 2048 × 32000 × 4 = 262 MB. A 4096 token context with a 128k vocabulary like Llama 3 uses 4096 × 128000 × 4 = 2.1 GB.",
+                "With logits_all off you only get logits for the last token, so just vocabulary size times 4 bytes, around 128-512 KB depending on vocabulary size. That's why it's off by default.",
+                "When to enable it: Computing perplexity scores, analyzing model behavior at each token, certain research/debugging scenarios.",
+                "When to leave it off: Normal chat/completion use cases, when you just want generated text, when memory is constrained.",
+                "For typical inference and chat applications, keep it off to save memory and improve performance.",
+                "Perplexity is a metric that measures how well a language model predicts a sequence of text. Lower perplexity means the model is less 'surprised' by the text and assigns higher probabilities to the actual tokens that appear.",
+                "Mathematically it's the exponentiated average negative log-likelihood per token. If a model assigns high probability to each token in a sequence, the perplexity is low. If the model is often wrong about what comes next, perplexity is high.",
+                "To calculate perplexity you need the probability distribution over the entire vocabulary at each position in the sequence, not just the final prediction. That's why logits_all must be enabled — it returns the raw scores for every token at every position, which you then convert to probabilities and use to compute how likely the actual text was under the model.",
+                "Common uses include comparing model quality, evaluating fine-tuning results, and measuring how well a model fits a particular domain of text. A model fine-tuned on legal documents should have lower perplexity on legal text than a general-purpose model.",
+                "If perplexity is high it means the model is struggling to predict the text well. A few approaches depending on the cause:",
+                "If the text is out of domain, fine-tune the model on similar data. A general model will have high perplexity on specialized text like legal documents or code because it wasn't trained heavily on that style.",
+                "If the model is too small, try a larger model. Bigger models generally have lower perplexity because they capture more patterns and nuances.",
+                "If the tokenizer is mismatched, make sure you're using the correct tokenizer for the model. Wrong tokenization produces garbage inputs and high perplexity.",
+                "If the text itself is unusual or noisy, that's expected. Random text, heavy jargon, typos, or multiple languages mixed together will naturally produce high perplexity.",
+                "If you're evaluating your own fine-tuned model and perplexity increased after training, you may have overfit to training data, used a learning rate that was too high, or trained for too many epochs. Check perplexity on both training and validation sets to diagnose.",
+                "Sometimes high perplexity is just information — it tells you the model doesn't fit that data well, which may be fine depending on your use case.",
+            ],
+            Self::VocabOnly => vec![
+                "Load only the vocabulary without model weights.",
+                "Useful for tokenization tasks without running inference.",
+            ],
+            Self::Reload => vec![
+                "The Reload button refreshes the list of available models from the backend.",
+                "After starting a new model server: If you just launched Ollama, vLLM, or another backend, the model list may not have been available when the page first loaded.",
+                "After pulling/downloading new models: If you ran `ollama pull llama3` or downloaded a new model, click Reload to see it in the dropdown.",
+                "After deleting models: To update the list after removing models from the backend.",
+                "If the initial fetch failed: Network issues or backend not ready can cause the first load to fail; Reload lets you retry.",
+                "To check for newly available models: Some backends may have models added dynamically.",
+            ],
+            Self::RopeTuning => vec![
+                "RoPE (Rotary Position Embedding) tuning refers to adjusting the positional encoding parameters to extend a model's context length beyond what it was originally trained on.",
+                "RoPE encodes position information by rotating the query and key vectors in the attention mechanism. The rotation angle depends on the position and a base frequency parameter, typically 10000 by default.",
+                "To extend context length you can adjust the base frequency. Increasing it (like to 500000 in Llama 3) compresses the position signal, letting the model handle longer sequences. This is sometimes called 'base frequency scaling' or adjusting rope_freq_base.",
+                "Another approach is linear scaling where you multiply position indices by a factor. If a model was trained on 4k context and you want 16k, you scale positions by 0.25 so the model sees familiar position values. The rope_freq_scale parameter controls this.",
+                "YaRN (Yet another RoPE extensioN) combines frequency scaling with attention temperature adjustments for better quality at extended lengths.",
+                "The tradeoff is that extending context too aggressively degrades quality. The model wasn't trained to attend over those distances so it may lose coherence or miss relevant context. Fine-tuning on longer sequences after adjusting RoPE parameters helps but isn't always necessary for moderate extensions.",
+                "In llama.cpp you can set rope_freq_base and rope_freq_scale directly when loading a model.",
+            ],
+        }
+    }
+}

@@ -33,7 +33,7 @@ pub fn Home() -> Element {
     let mut input_text = use_signal(|| String::new());
     let mut is_loading = use_signal(|| false);
     let mut error_msg = use_signal(|| Option::<String>::None);
-    let mut selected_model = use_signal(|| "phi:latest".to_string());
+    let selected_model = use_signal(|| "phi:latest".to_string());
 
     // File upload state
     let mut show_upload_panel = use_signal(|| false);
